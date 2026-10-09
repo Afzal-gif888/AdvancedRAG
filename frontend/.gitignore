@@ -26,3 +26,8 @@ dist-ssr
 # Playwright
 test-results/
 playwright-report/
+
+# Vercel CLI link metadata
+.vercel
+.vercel
+.env*

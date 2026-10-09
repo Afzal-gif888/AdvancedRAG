@@ -37,7 +37,14 @@ def get_orchestrator() -> Orchestrator:
 async def lifespan(app: FastAPI):
     configure_logging("agent-core", settings.LOG_LEVEL)
     log.info("startup", extra={"environment": settings.ENVIRONMENT})
+    wake_tasks = []
+    if settings.WAKE_DEPENDENCIES_ON_START:
+        from advancerag_common.wake import wake_dependencies
+
+        wake_tasks = wake_dependencies([settings.RAG_CORE_URL, settings.LLM_SERVICE_URL])
     yield
+    for task in wake_tasks:
+        task.cancel()
     if _orchestrator:
         await _orchestrator.rag.aclose()
         await _orchestrator.llm.aclose()

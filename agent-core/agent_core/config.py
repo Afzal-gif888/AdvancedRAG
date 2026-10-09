@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     RAG_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=600)
     LLM_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=600)
     AGENT_TURN_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0, le=1800)
+    # Hosts that put idle services to sleep (Render free): ping RAG Core and the LLM service on start
+    # so they wake in parallel (advancerag_common/wake.py). Off by default.
+    WAKE_DEPENDENCIES_ON_START: bool = False
 
     @field_validator("INTERNAL_SERVICE_TOKEN", "AGENT_MODEL", "AGENT_FAST_MODEL", mode="before")
     @classmethod

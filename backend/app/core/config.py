@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     LIBRARY_DISCOVERY_MAX_DOCUMENTS: int = Field(default=500, ge=1, le=500)
     # /ready fails when Agent Core / RAG Core are down (defaults to on outside development).
     READINESS_REQUIRE_SERVICES: Optional[bool] = None
+    # Hosts that put idle services to sleep (Render free): ping Agent Core and RAG Core on start so
+    # they wake in parallel (advancerag_common/wake.py). Off by default.
+    WAKE_DEPENDENCIES_ON_START: bool = False
 
     # Storage
     STORAGE_BACKEND: Literal["local", "s3"] = "local"

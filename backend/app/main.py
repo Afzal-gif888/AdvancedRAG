@@ -30,11 +30,18 @@ async def lifespan(app: FastAPI):
         worker = Worker()
         await worker.start()
     logger.info("startup", extra={"environment": settings.ENVIRONMENT})
+    wake_tasks = []
+    if settings.WAKE_DEPENDENCIES_ON_START:
+        from advancerag_common.wake import wake_dependencies
+
+        wake_tasks = wake_dependencies([settings.AGENT_CORE_URL, settings.RAG_CORE_URL])
     if settings.ENVIRONMENT in ("staging", "production") and not settings.email_configured:
         logger.warning("password_reset_email_disabled", extra={"hint": "set EMAIL_PROVIDER=resend with EMAIL_API_KEY and EMAIL_FROM"})
     try:
         yield
     finally:
+        for task in wake_tasks:
+            task.cancel()
         if worker:
             await worker.stop()
         await close_clients()

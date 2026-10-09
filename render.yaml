@@ -1,0 +1,163 @@
+# Render Blueprint: backend, Agent Core, RAG Core and the LLM service as FREE web services (512 MB RAM,
+# 0.1 CPU each; they sleep after 15 min without traffic and share 750 instance-hours per month).
+# Redis for rate limits: Render's free Key Value (private network). Elsewhere: Neon (PostgreSQL),
+# Pinecone advancerag-bge384, FreeLLMAPI on Railway, frontend on Vercel. Guide: docs/render-free.md.
+#
+# Values marked `sync: false` are entered in the Render dashboard when the Blueprint is created; they
+# are secrets or depend on URLs that exist only after the first deploy. Nothing secret is in this file.
+
+envVarGroups:
+  - name: advancerag-shared
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: INTERNAL_SERVICE_TOKEN       # same value in all four services; never leaves Render
+        generateValue: true
+
+services:
+  - type: keyvalue
+    name: advancerag-redis
+    plan: free
+    region: virginia
+    ipAllowList: []                      # private network only
+    maxmemoryPolicy: allkeys-lru         # rate-limit counters only; losing them on restart is harmless
+
+  - type: web
+    name: advancerag-rag-core
+    runtime: docker
+    plan: free
+    region: virginia                     # next to Pinecone (aws us-east-1) and Neon US East
+    dockerContext: .
+    dockerfilePath: ./rag-core/Dockerfile
+    healthCheckPath: /health             # liveness; /ready also needs the model (loads in the background)
+    autoDeployTrigger: commit
+    buildFilter:
+      paths: [rag-core/**, shared/**]
+    envVars:
+      - fromGroup: advancerag-shared
+      - key: DATABASE_URL                # Neon POOLED string for "advancerag_rag", sslmode=require
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX              # frozen
+        value: advancerag-bge384
+      # 512 MB / 0.1 CPU: measured with the production image under these limits, a 1,000-row CSV and
+      # a 30-page PDF index without running out of memory (peak 324 MiB; defaults are OOM-killed).
+      # These only change memory use and speed, not chunks, embeddings or results.
+      - key: EMBEDDING_BATCH_SIZE
+        value: "4"
+      - key: EMBEDDING_THREADS
+        value: "1"
+      - key: INGEST_CONCURRENCY
+        value: "1"
+      - key: INGEST_EMBED_SLICE
+        value: "32"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+
+  - type: web
+    name: advancerag-llm
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerContext: .
+    dockerfilePath: ./llm/Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildFilter:
+      paths: [llm/**, shared/**]
+    envVars:
+      - fromGroup: advancerag-shared
+      - key: FREELLMAPI_BASE_URL         # https://<freellmapi public domain on Railway>/v1
+        sync: false
+      - key: FREELLMAPI_API_KEY          # unified key from the FreeLLMAPI dashboard
+        sync: false
+      - key: FREELLMAPI_MODEL
+        value: auto
+
+  - type: web
+    name: advancerag-agent-core
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerContext: .
+    dockerfilePath: ./agent-core/Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildFilter:
+      paths: [agent-core/**, shared/**]
+    envVars:
+      - fromGroup: advancerag-shared
+      # Free services cannot receive private traffic: services call each other at their public HTTPS
+      # URLs (every internal endpoint still requires INTERNAL_SERVICE_TOKEN).
+      - key: RAG_CORE_URL                # https://advancerag-rag-core.onrender.com (check the real URL)
+        sync: false
+      - key: LLM_SERVICE_URL             # https://advancerag-llm.onrender.com
+        sync: false
+      - key: WAKE_DEPENDENCIES_ON_START
+        value: "true"
+      # A sleeping RAG Core needs several minutes to load the model at 0.1 CPU.
+      - key: CONNECT_TIMEOUT_SECONDS
+        value: "30"
+      - key: RAG_TIMEOUT_SECONDS
+        value: "420"
+      - key: LLM_TIMEOUT_SECONDS
+        value: "180"
+      - key: AGENT_TURN_TIMEOUT_SECONDS
+        value: "600"
+
+  - type: web
+    name: advancerag-backend
+    runtime: docker
+    plan: free
+    region: virginia
+    dockerContext: .
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildFilter:
+      paths: [backend/**, shared/**]
+    domains:
+      - api.afzaltech.in                 # DNS: CNAME api -> advancerag-backend.onrender.com
+    envVars:
+      - fromGroup: advancerag-shared
+      - key: DATABASE_URL                # Neon POOLED string for "advancerag", sslmode=require
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: AGENT_CORE_URL              # https://advancerag-agent-core.onrender.com
+        sync: false
+      - key: RAG_CORE_URL                # https://advancerag-rag-core.onrender.com
+        sync: false
+      - key: RATE_LIMIT_BACKEND
+        value: redis
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: advancerag-redis
+          property: connectionString
+      - key: FRONTEND_ORIGIN
+        value: https://app.afzaltech.in
+      - key: FRONTEND_PUBLIC_URL
+        value: https://app.afzaltech.in
+      - key: TRUSTED_PROXY_HOPS          # browser -> Render edge -> backend; verify after deploy
+        value: "1"
+      # Free instances have no persistent disk: uploaded originals survive only until the service
+      # restarts or sleeps. Indexing still works (it runs right after the upload); downloading or
+      # reprocessing an old original does not. For durable files, switch to s3 (Cloudflare R2).
+      - key: STORAGE_BACKEND
+        value: local
+      - key: ALLOW_LOCAL_STORAGE_IN_PRODUCTION
+        value: "true"
+      - key: WORKER_CONCURRENCY          # RAG Core indexes one document at a time on 0.1 CPU
+        value: "1"
+      - key: WAKE_DEPENDENCIES_ON_START
+        value: "true"
+      - key: AGENT_CORE_TIMEOUT_SECONDS
+        value: "660"
+      - key: RAG_CORE_TIMEOUT_SECONDS
+        value: "420"
+      - key: EMAIL_PROVIDER              # empty = password-reset e-mail off (resend needs EMAIL_API_KEY + EMAIL_FROM)
+        value: ""
