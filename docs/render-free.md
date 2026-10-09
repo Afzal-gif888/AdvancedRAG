@@ -1,13 +1,13 @@
 # Free deployment: Vercel + Render + Neon + Pinecone + Railway (FreeLLMAPI)
 
-| Component | Platform | Plan | Status (2026-10-09) |
+| Component | Platform | Plan | Status (2026-10-10) |
 |---|---|---|---|
 | React + Vite frontend | Vercel, project `advancerag-web` | Hobby (free) | **live**: https://advancerag-web.vercel.app (custom domain `app.afzaltech.in` pending DNS verification) |
 | PostgreSQL `advancerag`, `advancerag_rag` | Neon project `AdvancedRAG` (aws-us-east-2, PostgreSQL 18), branch `production` | Free | **created and migrated** (2026-10-10): `advancerag` at 0004 (owner role `advancerag_backend_app`), `advancerag_rag` at 0003 (owner role `advancerag_rag_app`); TLS 1.3 enforced |
 | Vectors | Pinecone `advancerag-bge384` (384-dim, cosine, aws us-east-1) | existing | verified; reused unchanged |
-| backend, agent-core, rag-core, llm | Render, `render.yaml` Blueprint | Free web services | ready to create |
-| Redis (rate limits) | Render Key Value `advancerag-redis` | Free | created with the Blueprint |
-| FreeLLMAPI | Railway project `advancerag`, service `freellmapi` | existing | running; https://freellmapi-production-a959.up.railway.app (API needs the unified key; provider keys not yet added) |
+| backend, agent-core, rag-core, llm | Render (virginia), created from the `render.yaml` values | Free web services | **live**: https://advancerag-backend.onrender.com, https://advancerag-agent-core.onrender.com, https://advancerag-rag-core.onrender.com, https://advancerag-llm.onrender.com (all `/ready` 200; smoke test 18/18) |
+| Redis (rate limits) | Render Key Value `advancerag-redis` | Free | **available** |
+| FreeLLMAPI | Railway project `advancerag`, service `freellmapi` | existing | running; https://freellmapi-production-a959.up.railway.app (unified key set on `advancerag-llm`; real completions verified) |
 
 Railway's own Redis keeps running, unused: Render's free services cannot reach it privately, and making
 it public is not worth the risk. Render's free Key Value is private and in the same region.
@@ -49,6 +49,15 @@ Limits to expect:
   method on file, Render disables builds or suspends services instead of charging.
 - **FreeLLMAPI on Railway's free plan** stops when the Railway free credit is used up.
 
+## Frontend to backend
+
+The Vercel project proxies `/api/*` to the backend (`frontend/vercel.json`, written by
+`python scripts/configure_vercel.py --mode proxy --backend-url https://advancerag-backend.onrender.com`).
+The browser only talks to `advancerag-web.vercel.app`, so the refresh cookie is first-party. Requests pass
+two proxies (Vercel, then Render), hence `TRUSTED_PROXY_HOPS=2` on the backend. Once `api.afzaltech.in`
+works, switch to direct mode with `--mode direct --backend-url https://api.afzaltech.in` and set
+`TRUSTED_PROXY_HOPS=1`.
+
 ## Setup steps
 
 1. **Neon** (done). The databases exist and are migrated; each has its own owner role. The **pooled**
@@ -82,7 +91,7 @@ eon.txt`
    ```
    python scripts/smoke_production.py --url https://app.afzaltech.in --backend-url https://api.afzaltech.in
    ```
-   Also check `TRUSTED_PROXY_HOPS=1` in the backend logs: rate-limit keys must be the real client IP
+   Also check `TRUSTED_PROXY_HOPS` in the backend logs: rate-limit keys must be the real client IP
    behind Render's proxy.
 
 ## Alternatives kept in the repository
