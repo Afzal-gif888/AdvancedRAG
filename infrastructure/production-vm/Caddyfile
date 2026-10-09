@@ -1,0 +1,28 @@
+# Public entry point: HTTPS for the API only (the web app is on Vercel). Certificates are issued and
+# renewed automatically (Let's Encrypt) once API_DOMAIN's DNS points at this VM and ports 80/443 are open.
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode gzip
+	# Only the API and health endpoints are exposed; FreeLLMAPI and the internal services are not.
+	@api path /api/* /health /ready
+	handle @api {
+		reverse_proxy backend:8000 {
+			# Server-sent events (streamed answers): pass bytes through immediately.
+			flush_interval -1
+			transport http {
+				read_timeout 10m
+			}
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}

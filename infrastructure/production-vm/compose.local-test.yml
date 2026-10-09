@@ -1,0 +1,45 @@
+# LOCAL VALIDATION ONLY (never on the VM): runs compose.yml on a developer machine with stand-ins for
+# the external accounts it cannot reach - a local PostgreSQL instead of Neon, the mock FreeLLMAPI
+# gateway instead of the real image, and Caddy on plain http://localhost:8280 instead of a public
+# HTTPS certificate. Pinecone and the embedding model are real.
+#
+#   docker compose -f compose.yml -f compose.local-test.yml --env-file <test .env> up -d --build
+services:
+  caddy:
+    ports: !override
+      - "127.0.0.1:8280:80"
+    volumes: !override
+      - ./Caddyfile.local-test:/etc/caddy/Caddyfile:ro
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: advancerag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: advancerag
+    volumes:
+      - ../production-rehearsal/init-rag-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U advancerag -d advancerag"]
+      interval: 3s
+      retries: 30
+    networks: [private]
+
+  backend:
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  rag-core:
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  freellmapi:
+    image: !reset null
+    build: { context: ../.., dockerfile: llm/Dockerfile }
+    command: ["python", "/srv/mock/mock_freellmapi.py", "--host", "0.0.0.0", "--port", "3001", "--key", "${MOCK_FREELLMAPI_KEY:?}"]
+    volumes: !override
+      - ../../scripts:/srv/mock:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 3001), 3)"]
+      interval: 5s
+      retries: 20

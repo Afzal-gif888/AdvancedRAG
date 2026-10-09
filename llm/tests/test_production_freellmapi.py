@@ -302,3 +302,14 @@ async def test_stream_success_metric_records_model(api):
 
     await api.post("/v1/stream", json={"messages": MSGS})
     assert 'llm_call_ms_count{kind="stream",model="mock-provider/auto",outcome="ok"}' in METRICS.render()
+
+
+def test_private_network_http_is_opt_in_and_only_for_single_label_hosts():
+    """Single-VM Compose: the LLM service reaches FreeLLMAPI as http://freellmapi:3001/v1 on a private
+    Docker network. Allowed only with the explicit flag, and only for a one-label service name."""
+    private = "http://freellmapi:3001/v1"
+    _rejected(_prod(FREELLMAPI_BASE_URL=private))  # off by default
+    assert _prod(FREELLMAPI_BASE_URL=private, FREELLMAPI_ALLOW_PRIVATE_NETWORK_HTTP=True).check_safety()
+    for url in ("http://freellmapi.example.com/v1", "http://localhost:3001/v1", "http://127.0.0.1:3001/v1",
+                "http://10.0.0.5:3001/v1", "http://freellmapi.railway.internal:3001/v1"):
+        _rejected(_prod(FREELLMAPI_BASE_URL=url, FREELLMAPI_ALLOW_PRIVATE_NETWORK_HTTP=True))

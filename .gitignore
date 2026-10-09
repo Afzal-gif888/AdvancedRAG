@@ -45,3 +45,6 @@ playwright-report/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Single-VM production secrets
+infrastructure/production-vm/env/*.env

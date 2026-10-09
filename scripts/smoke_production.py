@@ -68,6 +68,7 @@ def main() -> int:
     ap.add_argument("--url", required=True, help="public web URL (Vercel), e.g. https://app.vercel.app")
     ap.add_argument("--backend-url", help="backend public URL, to check /ready directly (optional)")
     ap.add_argument("--allow-http", action="store_true", help="local validation of this script only (skips HTTPS/header checks)")
+    ap.add_argument("--api-only", action="store_true", help="--url is the API host itself (no web app there): skip the web-app checks")
     args = ap.parse_args()
     base = args.url.rstrip("/")
     api = base + "/api/v1"
@@ -76,8 +77,9 @@ def main() -> int:
         return 1
 
     r = httpx.get(base + "/", timeout=30, follow_redirects=True)
-    check("web app served" + ("" if args.allow_http else " over HTTPS"), r.status_code == 200 and "<div id=\"root\"" in r.text, r.status_code)
-    if not args.allow_http:
+    if not args.api_only:
+        check("web app served" + ("" if args.allow_http else " over HTTPS"), r.status_code == 200 and "<div id=\"root\"" in r.text, r.status_code)
+    if not args.allow_http and not args.api_only:
         check("security headers (CSP, HSTS)", "content-security-policy" in r.headers and "strict-transport-security" in r.headers)
     if args.backend_url:
         r = httpx.get(args.backend_url.rstrip("/") + "/ready", timeout=60)

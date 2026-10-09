@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Literal, Optional
 from urllib.parse import urlparse
 
@@ -44,6 +45,10 @@ class Settings(BaseSettings):
     # which never leave Railway's encrypted private network. Every other production URL must be
     # https, and localhost is always refused.
     FREELLMAPI_ALLOW_RAILWAY_PRIVATE_HTTP: bool = False
+    # Opt-in: allow plain http ONLY for a single-label host (a service name on a private Docker
+    # network, e.g. http://freellmapi:3001/v1 on a single-VM Compose deployment). Such names are
+    # not public DNS names; anything with a dot, and localhost, stays refused.
+    FREELLMAPI_ALLOW_PRIVATE_NETWORK_HTTP: bool = False
 
     LLM_TIMEOUT_SECONDS: float = Field(default=90.0, gt=0, le=600)
     LLM_CONNECT_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0, le=60)
@@ -105,11 +110,13 @@ class Settings(BaseSettings):
 
     def _railway_private_http_allowed(self, url: str) -> bool:
         parsed = urlparse(url)
-        return (
-            self.FREELLMAPI_ALLOW_RAILWAY_PRIVATE_HTTP
-            and parsed.scheme == "http"
-            and (parsed.hostname or "").lower().endswith(".railway.internal")
-        )
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "http":
+            return False
+        if self.FREELLMAPI_ALLOW_RAILWAY_PRIVATE_HTTP and host.endswith(".railway.internal"):
+            return True
+        # A Docker service name: one DNS label, no dot (localhost was already refused above).
+        return self.FREELLMAPI_ALLOW_PRIVATE_NETWORK_HTTP and bool(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", host))
 
     @property
     def internal_token(self) -> Optional[str]:

@@ -1,0 +1,141 @@
+# AdvancedRAG on ONE virtual machine (free-tier friendly): backend, Agent Core, RAG Core, LLM service,
+# FreeLLMAPI, Redis and Caddy (HTTPS) on a private Docker network. PostgreSQL is Neon, vectors are the
+# existing Pinecone index advancerag-bge384, the web app is on Vercel.
+#
+# Only Caddy is published (80/443). FreeLLMAPI's dashboard is bound to the VM's loopback and reached
+# through an SSH tunnel; every other port stays on the private network.
+#
+#   cp .env.example .env && for f in env/*.env.example; do cp "$f" "${f%.example}"; done   # then fill in
+#   docker compose up -d --build
+#
+# Setup, sizing and verification: README.md in this folder.
+name: advancerag-prod   # distinct from the dev stack (project "advancerag")
+
+x-app: &app
+  restart: unless-stopped
+  networks: [private]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+x-service-env: &service-env
+  ENVIRONMENT: production
+  HOST: "::"                                   # dual-stack (advancerag_common/serve.py)
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN in .env}
+
+networks:
+  private:
+    enable_ipv6: true
+
+volumes:
+  caddy_data:            # TLS certificates and ACME account: keep it
+  caddy_config:
+  freellmapi_data:       # provider keys + unified key (encrypted with ENCRYPTION_KEY): back it up
+  redis_data:
+  backend_storage:       # uploaded files when STORAGE_BACKEND=local (back it up), unused with s3/R2
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env (e.g. api.example.com)}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [private]
+    depends_on:
+      backend: { condition: service_healthy }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  backend:
+    <<: *app
+    build: { context: ../.., dockerfile: backend/Dockerfile }
+    env_file: [env/backend.env]
+    environment:
+      <<: *service-env
+      PORT: "8000"
+      AGENT_CORE_URL: http://agent-core:8001
+      RAG_CORE_URL: http://rag-core:8002
+      RATE_LIMIT_BACKEND: redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
+    volumes:
+      - backend_storage:/srv/backend/var/storage
+    depends_on:
+      redis: { condition: service_healthy }
+      agent-core: { condition: service_healthy }
+      rag-core: { condition: service_healthy }
+
+  agent-core:
+    <<: *app
+    build: { context: ../.., dockerfile: agent-core/Dockerfile }
+    environment:
+      <<: *service-env
+      PORT: "8001"
+      RAG_CORE_URL: http://rag-core:8002
+      LLM_SERVICE_URL: http://llm:8003
+    depends_on:
+      rag-core: { condition: service_healthy }
+      llm: { condition: service_healthy }
+
+  rag-core:
+    <<: *app
+    build: { context: ../.., dockerfile: rag-core/Dockerfile }
+    env_file: [env/rag-core.env]
+    environment:
+      <<: *service-env
+      PORT: "8002"
+      # Frozen: the production index and model. Not configurable from env files on purpose.
+      PINECONE_INDEX: advancerag-bge384
+      EMBEDDING_MODEL: BAAI/bge-small-en-v1.5
+
+  llm:
+    <<: *app
+    build: { context: ../.., dockerfile: llm/Dockerfile }
+    env_file: [env/llm.env]
+    environment:
+      <<: *service-env
+      PORT: "8003"
+      FREELLMAPI_BASE_URL: http://freellmapi:3001/v1
+      FREELLMAPI_ALLOW_PRIVATE_NETWORK_HTTP: "true"   # only single-label Docker names (llm_service/config.py)
+    depends_on:
+      freellmapi: { condition: service_healthy }
+
+  freellmapi:
+    <<: *app
+    image: ghcr.io/tashfeenahmed/freellmapi:latest
+    env_file: [env/freellmapi.env]
+    environment:
+      PORT: "3001"
+    ports:
+      - "127.0.0.1:3001:3001"   # dashboard via SSH tunnel only: ssh -L 3001:127.0.0.1:3001 <vm>
+    volumes:
+      - freellmapi_data:/app/server/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    <<: *app
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}

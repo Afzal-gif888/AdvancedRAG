@@ -1,0 +1,12 @@
+# LOCAL VALIDATION ONLY: same routing as Caddyfile, on plain HTTP (no public certificate locally).
+:80 {
+	@api path /api/* /health /ready
+	handle @api {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
