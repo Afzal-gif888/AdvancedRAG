@@ -1,0 +1,114 @@
+# Production rehearsal: the four service images run with ENVIRONMENT=production (every safety
+# check on) exactly as on Railway — private service names, Redis rate limiting, S3 storage,
+# strong secrets, internal-token auth, TLS-less private Postgres — fully isolated from the dev
+# stack (own project, network, databases and volumes; only the backend is published, on :8200).
+#
+# The ONLY stand-in is FreeLLMAPI: the mock gateway answers on a Railway-style private hostname
+# (freellmapi.railway.internal), which also exercises FREELLMAPI_ALLOW_RAILWAY_PRIVATE_HTTP.
+# Pinecone is real (the rehearsal user's vectors are deleted afterwards).
+#
+#   python scripts/rehearse_production.py        # generates secrets, runs, verifies, tears down
+name: advrag-rehearsal
+
+x-prod: &prod
+  ENVIRONMENT: production
+  # Listen dual-stack, as on Railway (its private network may be IPv6-only).
+  HOST: "::"
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?}
+  LOG_LEVEL: INFO
+
+networks:
+  default:
+    enable_ipv6: true   # the services must be reachable over IPv6 (Railway private networking)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: advancerag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: advancerag
+    volumes:
+      - ./init-rag-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      # Over TCP: the Unix socket answers during initdb, while TCP is still off.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U advancerag -d advancerag"]
+      interval: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:?}"]
+
+  s3:
+    image: chrislusf/seaweedfs:latest
+    command: ["server", "-s3", "-dir=/data", "-ip.bind=0.0.0.0"]
+
+  freellmapi:
+    build: { context: ../.., dockerfile: llm/Dockerfile }
+    command: ["python", "/srv/mock/mock_freellmapi.py", "--host", "0.0.0.0", "--port", "3901", "--key", "${FREELLMAPI_API_KEY:?}"]
+    volumes:
+      - ../../scripts:/srv/mock:ro
+    networks:
+      default:
+        aliases: [freellmapi.railway.internal]
+
+  llm:
+    build: { context: ../.., dockerfile: llm/Dockerfile }
+    restart: on-failure   # as railway.json (restartPolicyType ON_FAILURE)
+    environment:
+      <<: *prod
+      FREELLMAPI_BASE_URL: http://freellmapi.railway.internal:3901/v1
+      FREELLMAPI_ALLOW_RAILWAY_PRIVATE_HTTP: "true"
+      FREELLMAPI_API_KEY: ${FREELLMAPI_API_KEY:?}
+      PORT: "8003"
+    depends_on: [freellmapi]
+
+  rag-core:
+    build: { context: ../.., dockerfile: rag-core/Dockerfile }
+    restart: on-failure   # as railway.json (restartPolicyType ON_FAILURE)
+    environment:
+      <<: *prod
+      DATABASE_URL: postgresql://advancerag:${POSTGRES_PASSWORD}@postgres:5432/advancerag_rag
+      PINECONE_API_KEY: ${PINECONE_API_KEY:?}
+      PINECONE_INDEX: ${PINECONE_INDEX:?}
+      PORT: "8002"
+    depends_on: { postgres: { condition: service_healthy } }
+
+  agent-core:
+    build: { context: ../.., dockerfile: agent-core/Dockerfile }
+    restart: on-failure   # as railway.json (restartPolicyType ON_FAILURE)
+    environment:
+      <<: *prod
+      RAG_CORE_URL: http://rag-core:8002
+      LLM_SERVICE_URL: http://llm:8003
+      PORT: "8001"
+    depends_on: [rag-core, llm]
+
+  backend:
+    build: { context: ../.., dockerfile: backend/Dockerfile }
+    restart: on-failure   # as railway.json (restartPolicyType ON_FAILURE)
+    environment:
+      <<: *prod
+      DATABASE_URL: postgresql://advancerag:${POSTGRES_PASSWORD}@postgres:5432/advancerag
+      JWT_SECRET: ${JWT_SECRET:?}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?}
+      FRONTEND_ORIGIN: https://rehearsal.example.com
+      AGENT_CORE_URL: http://agent-core:8001
+      RAG_CORE_URL: http://rag-core:8002
+      RATE_LIMIT_BACKEND: redis
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      STORAGE_BACKEND: s3
+      STORAGE_ENDPOINT: http://s3:8333
+      STORAGE_BUCKET: advancerag-rehearsal
+      STORAGE_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+      STORAGE_SECRET_KEY: ${S3_SECRET_KEY:?}
+      TRUSTED_PROXY_HOPS: "1"
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:8200:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+      s3: { condition: service_started }
+      agent-core: { condition: service_started }

@@ -1,0 +1,11 @@
+# One virtualenv for running every service + all test suites locally:
+#   python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   (Windows)
+#   python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt       (Linux/macOS)
+-e ./shared
+-r backend/requirements.txt
+-r rag-core/requirements.txt
+-r agent-core/requirements.txt
+-r llm/requirements.txt
+pytest>=8
+pytest-asyncio>=0.23
+aiosqlite>=0.20

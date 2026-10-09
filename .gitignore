@@ -1,0 +1,47 @@
+# Secrets: every .env except the examples
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+__pycache__/
+*.egg-info/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Node / builds
+node_modules/
+dist/
+build/
+
+# Runtime data
+backend/var/
+var/
+uploads/
+storage/
+logs/
+*.log
+*.db
+*.sqlite3
+
+# Test artefacts
+.e2e-outbox/
+test-results/
+playwright-report/
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

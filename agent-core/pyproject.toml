@@ -1,0 +1,17 @@
+[project]
+name = "advancerag-agent-core"
+version = "1.0.0"
+description = "AdvancedRAG Agent Core (orchestration)"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+
+[tool.pyrefly]
+# Same checks the editor runs without a config ("basic"); this section only adds import roots.
+preset = "basic"
+# Same import roots pytest uses: the service, the test helpers (conftest) and the shared package
+search-path = [".", "tests", "../shared"]

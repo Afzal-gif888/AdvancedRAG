@@ -1,0 +1,101 @@
+# AdvancedRAG local infrastructure.
+#
+#   docker compose up -d                      # PostgreSQL + Redis (what local development needs)
+#   docker compose --profile storage up -d    # + SeaweedFS (S3-compatible) to test STORAGE_BACKEND=s3
+#   docker compose --profile app up --build   # + backend, agent-core, rag-core, llm in containers
+#
+# Ports avoid clashing with a locally installed PostgreSQL (5432) / Redis (6379).
+# Variables come from ./.env (POSTGRES_PASSWORD, ...), which is git-ignored.
+#
+# FreeLLMAPI is NOT run here: it stays an external dependency (your desktop app in development,
+# a secure remote endpoint in production). Containers reach a desktop FreeLLMAPI through
+# host.docker.internal.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: advancerag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: advancerag
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U advancerag -d advancerag"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # S3-compatible object storage for testing STORAGE_BACKEND=s3 locally (SeaweedFS; the MinIO
+  # images are no longer anonymously pullable). Development only: no auth configured.
+  s3:
+    image: chrislusf/seaweedfs:latest
+    profiles: ["storage"]
+    command: ["server", "-s3", "-dir=/data", "-ip.bind=0.0.0.0"]
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - s3data:/data
+
+  llm:
+    profiles: ["app"]
+    build: { context: ., dockerfile: llm/Dockerfile }
+    env_file: llm/.env
+    environment:
+      # Reach the FreeLLMAPI desktop app on the host machine (development only; its port is
+      # 31415). The desktop app may listen on 127.0.0.1 only, in which case containers cannot
+      # reach it: run the LLM service on the host instead (scripts/run_stack.py).
+      FREELLMAPI_BASE_URL: ${FREELLMAPI_BASE_URL:-http://host.docker.internal:31415/v1}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  rag-core:
+    profiles: ["app"]
+    build: { context: ., dockerfile: rag-core/Dockerfile }
+    env_file: rag-core/.env  # embedding model is baked into the image (no download at start)
+    environment:
+      DATABASE_URL: postgresql+asyncpg://advancerag:${POSTGRES_PASSWORD}@postgres:5432/advancerag_rag
+    depends_on: { postgres: { condition: service_healthy } }
+
+  agent-core:
+    profiles: ["app"]
+    build: { context: ., dockerfile: agent-core/Dockerfile }
+    env_file: agent-core/.env
+    environment:
+      RAG_CORE_URL: http://rag-core:8002
+      LLM_SERVICE_URL: http://llm:8003
+    depends_on: [rag-core, llm]
+
+  backend:
+    profiles: ["app"]
+    build: { context: ., dockerfile: backend/Dockerfile }
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://advancerag:${POSTGRES_PASSWORD}@postgres:5432/advancerag
+      AGENT_CORE_URL: http://agent-core:8001
+      RAG_CORE_URL: http://rag-core:8002
+      LOCAL_STORAGE_PATH: /srv/backend/var/storage
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - storage:/srv/backend/var/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+      agent-core: { condition: service_started }
+
+volumes:
+  pgdata:
+  s3data:
+  storage:

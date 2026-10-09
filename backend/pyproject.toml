@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "advancerag-backend"
+version = "1.0.0"
+description = "FastAPI backend for AdvancedRAG"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[tool.pyrefly]
+# Same checks the editor runs without a config ("basic"); this section only adds import roots.
+preset = "basic"
+# Same import roots pytest uses: the app, the test helpers (conftest) and the shared package
+# (installed editable in the project .venv; listed here so editors resolve it from any interpreter).
+search-path = [".", "tests", "../shared"]
