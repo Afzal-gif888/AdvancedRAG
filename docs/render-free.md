@@ -3,7 +3,7 @@
 | Component | Platform | Plan | Status (2026-10-09) |
 |---|---|---|---|
 | React + Vite frontend | Vercel, project `advancerag-web` | Hobby (free) | **live**: https://advancerag-web.vercel.app (custom domain `app.afzaltech.in` pending DNS verification) |
-| PostgreSQL `advancerag`, `advancerag_rag` | Neon | Free | pending: Neon sign-in |
+| PostgreSQL `advancerag`, `advancerag_rag` | Neon project `AdvancedRAG` (aws-us-east-2, PostgreSQL 18), branch `production` | Free | **created and migrated** (2026-10-10): `advancerag` at 0004 (owner role `advancerag_backend_app`), `advancerag_rag` at 0003 (owner role `advancerag_rag_app`); TLS 1.3 enforced |
 | Vectors | Pinecone `advancerag-bge384` (384-dim, cosine, aws us-east-1) | existing | verified; reused unchanged |
 | backend, agent-core, rag-core, llm | Render, `render.yaml` Blueprint | Free web services | ready to create |
 | Redis (rate limits) | Render Key Value `advancerag-redis` | Free | created with the Blueprint |
@@ -51,10 +51,10 @@ Limits to expect:
 
 ## Setup steps
 
-1. **Neon.** Run `npx neon@latest login` in your own terminal. Then the databases `advancerag` and
-   `advancerag_rag` are created (or found), and migrations run automatically when the services start:
-   backend through 0004, rag-core through 0003. Keep both **pooled** connection strings
-   (`sslmode=require`) for step 3.
+1. **Neon** (done). The databases exist and are migrated; each has its own owner role. The **pooled**
+   connection strings (`sslmode=require`) for step 3 are in `%USERPROFILE%dvancerag-secrets
+eon.txt`
+   (local only). Migrations also run on service start and are idempotent.
 2. **FreeLLMAPI provider keys.** Open https://freellmapi-production-a959.up.railway.app and sign in with
    the details in `%USERPROFILE%\advancerag-secrets\freellmapi.txt`. Add your LLM provider keys, then
    copy the unified key from the Keys page.
