@@ -36,6 +36,15 @@ Limits to expect:
   backend (about 1 min); it then wakes Agent Core and RAG Core in parallel (`WAKE_DEPENDENCIES_ON_START`),
   and RAG Core needs a few more minutes to load the model. The first question can take several minutes
   or time out; ask again once it is awake. The timeouts in `render.yaml` are raised for this.
+- **Waking goes through Vercel.** Render wakes a sleeping service only for requests from outside
+  Render: a call from the backend to a sleeping Agent Core gets an immediate 502 and Agent Core stays
+  asleep (seen in production on 2026-10-10). So the Vercel project has `/wake/<service-name>`
+  rewrites to each service's `/health`, and the backend (`WAKE_RELAY_URL`, `CHAT_WAKE_SECONDS`,
+  `RAG_WAKE_SECONDS`) and Agent Core wake each other through them. A chat turn after a pause waits
+  for Agent Core and the LLM service (and RAG Core if the user has documents) and shows
+  "Starting the AI service…" meanwhile; a document job waits for RAG Core with its lease renewed.
+  While document jobs are queued or running, the backend pings its own URL (`KEEP_AWAKE_URL`) so
+  Render does not put it to sleep mid-job; its status polls keep RAG Core awake too.
 - **750 free instance-hours per month for the whole workspace.** Four services awake together use four
   hours per hour, so about 187 hours of active use per month. If the pool runs out, Render suspends
   every free service until the next month.
@@ -52,7 +61,7 @@ Limits to expect:
 ## Frontend to backend
 
 The Vercel project proxies `/api/*` to the backend (`frontend/vercel.json`, written by
-`python scripts/configure_vercel.py --mode proxy --backend-url https://advancerag-backend.onrender.com`).
+`python scripts/configure_vercel.py --mode proxy --backend-url https://advancerag-backend.onrender.com --wake-url https://advancerag-agent-core.onrender.com --wake-url https://advancerag-rag-core.onrender.com --wake-url https://advancerag-llm.onrender.com`).
 The browser only talks to `advancerag-web.vercel.app`, so the refresh cookie is first-party. Requests pass
 two proxies (Vercel, then Render), hence `TRUSTED_PROXY_HOPS=2` on the backend. Once `api.afzaltech.in`
 works, switch to direct mode with `--mode direct --backend-url https://api.afzaltech.in` and set

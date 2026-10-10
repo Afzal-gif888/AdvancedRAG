@@ -106,5 +106,13 @@ async def finish(db: AsyncSession, job_id: uuid.UUID, attempt: int, **values) ->
     return result.rowcount == 1
 
 
+async def has_active_jobs(db: AsyncSession) -> bool:
+    """True while any job is queued (including waiting for a retry) or running."""
+    found = await db.scalar(
+        select(BackgroundJob.id).where(BackgroundJob.status.in_((job_status.PENDING, job_status.RUNNING))).limit(1)
+    )
+    return found is not None
+
+
 def retry_delay(attempt: int) -> timedelta:
     return timedelta(seconds=min(30 * (2 ** (attempt - 1)), 15 * 60))

@@ -10,7 +10,9 @@ import asyncio
 import json
 import logging
 import time
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, List, Optional
+
+from advancerag_common import wake
 
 from app.core.config import settings
 from app.core.exceptions import AppError
@@ -29,6 +31,7 @@ logger = logging.getLogger("advancerag.agent")
 
 SAFE_ERROR_MESSAGES = {
     "AGENT_SERVICE_UNAVAILABLE": "The AI service is temporarily unavailable.",
+    "AI_SERVICE_STARTING": "The AI service is still starting up after being idle. Please try again in a minute.",
     "AGENT_SERVICE_ERROR": "The AI service could not complete this request.",
     "RAG_SERVICE_UNAVAILABLE": "Document search is temporarily unavailable.",
     "LLM_UNAVAILABLE": "The language model is temporarily unavailable.",
@@ -41,6 +44,10 @@ SAFE_ERROR_MESSAGES = {
 # Error codes from Agent Core that may be shown as-is; anything else becomes GENERATION_FAILED.
 _AGENT_CODES = {"RAG_SERVICE_UNAVAILABLE", "LLM_UNAVAILABLE", "LLM_TIMEOUT", "LLM_RATE_LIMITED", "GENERATION_FAILED"}
 
+# Codes after which the dependencies' cached "healthy" state is dropped, so the next turn re-checks them.
+_DEPENDENCY_DOWN = {"AGENT_SERVICE_UNAVAILABLE", "RAG_SERVICE_UNAVAILABLE", "LLM_UNAVAILABLE", "LLM_TIMEOUT"}
+WAKING_STATUS_EVERY_SECONDS = 8.0
+
 # Fields from intermediate events that are safe to pass to the browser.
 _STATUS_FIELDS = {"retrieval.completed": {"retrieved_chunks"}}
 
@@ -51,6 +58,31 @@ def sse(event: str, data: dict) -> str:
 
 def safe_agent_code(code) -> str:
     return code if code in _AGENT_CODES else "GENERATION_FAILED"
+
+
+def _wake_targets(turn: PreparedTurn) -> List[str]:
+    targets = [settings.AGENT_CORE_URL, *settings.wake_extra_urls]
+    req = turn.agent_request
+    if req.document_ids or req.library_documents:  # only a turn that may search documents needs RAG Core
+        targets.append(settings.RAG_CORE_URL)
+    return targets
+
+
+async def wake_for_turn(turn: PreparedTurn) -> bool:
+    """Wake sleeping dependencies (CHAT_WAKE_SECONDS > 0, e.g. Render free). False when Agent Core or
+    the LLM layer did not come up in time; RAG Core is best effort, so general chat never waits on it
+    failing (Agent Core then reports document search as unavailable, as before)."""
+    if settings.CHAT_WAKE_SECONDS <= 0:
+        return True
+    targets = _wake_targets(turn)
+    results = await asyncio.gather(*(wake.ensure_awake(u, budget=settings.CHAT_WAKE_SECONDS, relay=settings.WAKE_RELAY_URL)
+                                     for u in targets))
+    return all(ok for url, ok in zip(targets, results) if url != settings.RAG_CORE_URL)
+
+
+def _forget_health(turn: PreparedTurn) -> None:
+    for url in _wake_targets(turn):
+        wake.mark_unhealthy(url)
 
 
 async def _persist(message_id, **kwargs):
@@ -71,8 +103,12 @@ async def run_turn(agent: AgentCoreClient, turn: PreparedTurn):
     """Non-streaming: returns the finalized assistant message or raises a safe AppError."""
     started = time.perf_counter()
     try:
+        if not await wake_for_turn(turn):
+            raise AppError(SAFE_ERROR_MESSAGES["AI_SERVICE_STARTING"], code="AI_SERVICE_STARTING", status_code=503)
         result = await agent.invoke(turn.agent_request)
     except AppError as exc:
+        if exc.code in _DEPENDENCY_DOWN:
+            _forget_health(turn)
         await _persist(turn.assistant_message.id, status=msg_status.FAILED, error_code=exc.code)
         raise
     if not result.content.strip():
@@ -108,7 +144,15 @@ async def stream_turn(agent: AgentCoreClient, turn: PreparedTurn) -> AsyncIterat
         },
     )
 
+    waking: Optional[asyncio.Task] = None
     try:
+        if settings.CHAT_WAKE_SECONDS > 0:
+            # Status events while waiting keep the browser (and any proxy) from seeing a silent stream.
+            waking = asyncio.create_task(wake_for_turn(turn))
+            while not (await asyncio.wait({waking}, timeout=WAKING_STATUS_EVERY_SECONDS))[0]:
+                yield sse("agent.waking", {})
+            if not waking.result():
+                raise AppError(SAFE_ERROR_MESSAGES["AI_SERVICE_STARTING"], code="AI_SERVICE_STARTING", status_code=503)
         async for ev in agent.stream(turn.agent_request):
             if ev.event == "content.delta":
                 delta = ev.data.get("delta")
@@ -146,8 +190,13 @@ async def stream_turn(agent: AgentCoreClient, turn: PreparedTurn) -> AsyncIterat
     except Exception:
         logger.exception("stream_turn_failed")
         error_code = "GENERATION_FAILED"
+    finally:
+        if waking is not None and not waking.done():
+            waking.cancel()
 
     content = "".join(parts)
+    if error_code in _DEPENDENCY_DOWN:
+        _forget_health(turn)
     if error_code is None and not content.strip():
         error_code = "EMPTY_RESPONSE"
 

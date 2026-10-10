@@ -96,6 +96,10 @@ services:
         sync: false
       - key: WAKE_DEPENDENCIES_ON_START
         value: "true"
+      # Render wakes a sleeping service only for requests from outside Render: wake through the
+      # Vercel frontend's /wake/<service-name> rewrites (scripts/configure_vercel.py --wake-url).
+      - key: WAKE_RELAY_URL              # https://advancerag-web.vercel.app/wake
+        sync: false
       # A sleeping RAG Core needs several minutes to load the model at 0.1 CPU.
       - key: CONNECT_TIMEOUT_SECONDS
         value: "30"
@@ -155,6 +159,16 @@ services:
         value: "1"
       - key: WAKE_DEPENDENCIES_ON_START
         value: "true"
+      - key: WAKE_RELAY_URL              # https://advancerag-web.vercel.app/wake
+        sync: false
+      - key: WAKE_EXTRA_URLS             # https://advancerag-llm.onrender.com (woken with Agent Core)
+        sync: false
+      - key: CHAT_WAKE_SECONDS           # a chat turn waits this long for sleeping services
+        value: "150"
+      - key: RAG_WAKE_SECONDS            # a document job waits this long for a sleeping RAG Core
+        value: "300"
+      - key: KEEP_AWAKE_URL              # this service's own URL: stays awake while document jobs run
+        sync: false
       - key: AGENT_CORE_TIMEOUT_SECONDS
         value: "660"
       - key: RAG_CORE_TIMEOUT_SECONDS

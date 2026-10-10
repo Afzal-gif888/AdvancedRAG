@@ -11,6 +11,7 @@ import logging
 import time
 from typing import Optional
 
+from advancerag_common import wake
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +42,8 @@ DEFAULT_PROCESSING_ERROR = f"Document ingestion failed. {NO_DATA_KEPT}"
 
 # Payload marker for the RAG-only cleanup queued after an ingestion finally fails.
 CLEANUP_FAILED_INGEST = "cleanup_failed_ingest"
+# While waiting for a sleeping RAG Core to wake, renew the job's lease this often (well inside JOB_STALE_AFTER_SECONDS).
+WAKE_HEARTBEAT_SECONDS = 30.0
 
 
 class JobCancelled(Exception):
@@ -63,6 +66,24 @@ async def _heartbeat(db: AsyncSession, job: BackgroundJob, progress: str) -> Non
     # Renews the lease; requeue_stale_jobs only recovers jobs whose heartbeat stopped. Raises
     # JobSuperseded if the job was recovered meanwhile (this run must then stop quietly).
     await job_service.heartbeat(db, job.id, job.attempts, progress)
+
+
+async def _ensure_rag_awake(db: AsyncSession, job: BackgroundJob) -> None:
+    """Wake RAG Core if it is asleep (RAG_WAKE_SECONDS > 0, e.g. Render free) before talking to it,
+    heartbeating the job meanwhile so the wait never looks like a crashed worker. Gives up after the
+    budget with a retryable error; the job's bounded attempts and backoff take it from there."""
+    if settings.RAG_WAKE_SECONDS <= 0:
+        return
+    waking = asyncio.create_task(wake.ensure_awake(settings.RAG_CORE_URL, budget=settings.RAG_WAKE_SECONDS,
+                                                   relay=settings.WAKE_RELAY_URL))
+    try:
+        while not (await asyncio.wait({waking}, timeout=WAKE_HEARTBEAT_SECONDS))[0]:
+            await _heartbeat(db, job, "waking_rag")
+        if not waking.result():
+            raise RAGCoreError("RAG_SERVICE_UNAVAILABLE", retryable=True)
+    finally:
+        if not waking.done():
+            waking.cancel()
 
 
 async def _discard_quietly(rag: RAGCoreClient, doc: Document) -> None:
@@ -130,6 +151,7 @@ async def ingest_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
         raise JobCancelled("document_deleted")  # deleted while queued: nothing to do
     await document_service.mark_status(db, doc.id, doc_status.PROCESSING)
     await _heartbeat(db, job, "starting")
+    await _ensure_rag_awake(db, job)
 
     # Idempotent: a retried/duplicate job joins the attempt that is already running, or just
     # records the result of one that already finished, instead of starting a second ingestion.
@@ -157,8 +179,10 @@ async def delete_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
         # Only while the document is still failed: a retry (reprocess) owns the index from then on.
         if (await _current_status(db, job.resource_id)) != doc_status.FAILED:
             return
+        await _ensure_rag_awake(db, job)
         await rag.delete_document(document_id=job.resource_id, user_id=job.user_id)
         return
+    await _ensure_rag_awake(db, job)
     await rag.delete_document(document_id=job.resource_id, user_id=job.user_id)
     key = payload.get("storage_key")
     if key:

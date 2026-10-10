@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # Hosts that put idle services to sleep (Render free): ping RAG Core and the LLM service on start
     # so they wake in parallel (advancerag_common/wake.py). Off by default.
     WAKE_DEPENDENCIES_ON_START: bool = False
+    # Render only wakes a sleeping service for requests from outside Render: wake through this relay
+    # (the Vercel frontend's /wake/<service-name> rewrites). Empty = ping the services directly.
+    WAKE_RELAY_URL: Optional[str] = None
 
     @field_validator("INTERNAL_SERVICE_TOKEN", "AGENT_MODEL", "AGENT_FAST_MODEL", mode="before")
     @classmethod

@@ -8,6 +8,11 @@
     #    Build with VITE_API_BASE_URL=https://api.example.com/api/v1. Backend: TRUSTED_PROXY_HOPS=1.
     python scripts/configure_vercel.py --mode direct --backend-url https://api.example.com
 
+    # Render free: also give each sleeping service a wake path (Render wakes a service only for
+    # requests from outside Render, so the services wake each other through these). Each maps
+    # /wake/<first label of the host> to that service's unauthenticated GET /health, nothing else.
+    python scripts/configure_vercel.py --mode proxy --backend-url https://advancerag-backend.onrender.com         --wake-url https://advancerag-agent-core.onrender.com --wake-url https://advancerag-rag-core.onrender.com         --wake-url https://advancerag-llm.onrender.com
+
 Always: SPA fallback (client-side routes like /share/<token> and /reset-password) and strict
 security headers. The Content-Security-Policy allows only this site plus, in direct mode, the API.
 """
@@ -19,9 +24,14 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(mode: str, backend_url: str | None) -> dict:
+def build(mode: str, backend_url: str | None, wake_urls: list[str] | None = None) -> dict:
     connect = ["'self'"]
     rewrites = []
+    for url in wake_urls or []:
+        u = urlparse(url)
+        if u.scheme != "https" or not u.hostname:
+            raise SystemExit("--wake-url must be an https URL, e.g. https://advancerag-llm.onrender.com")
+        rewrites.append({"source": f"/wake/{u.hostname.split('.')[0]}", "destination": f"https://{u.netloc}/health"})
     if backend_url:
         u = urlparse(backend_url)
         if u.scheme != "https" or not u.hostname:
@@ -69,9 +79,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=["proxy", "direct"], default="proxy")
     ap.add_argument("--backend-url", help="https URL of the Railway backend (omit to write SPA/headers only)")
+    ap.add_argument("--wake-url", action="append", default=[], help="https URL of a service to expose at /wake/<name> (repeatable)")
     ap.add_argument("--out", default=str(ROOT / "frontend" / "vercel.json"))
     args = ap.parse_args()
-    cfg = build(args.mode, args.backend_url)
+    cfg = build(args.mode, args.backend_url, args.wake_url)
     Path(args.out).write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"wrote {args.out} (mode={args.mode}, backend={'set' if args.backend_url else 'not set'})")
 

@@ -89,6 +89,18 @@ class Settings(BaseSettings):
     # Hosts that put idle services to sleep (Render free): ping Agent Core and RAG Core on start so
     # they wake in parallel (advancerag_common/wake.py). Off by default.
     WAKE_DEPENDENCIES_ON_START: bool = False
+    # Render only wakes a sleeping service for requests from outside Render, so wakes go through a
+    # relay (the Vercel frontend's /wake/<service-name> rewrites to each service's /health).
+    WAKE_RELAY_URL: Optional[str] = None
+    # Other services to wake with Agent Core (comma-separated base URLs, e.g. the LLM service).
+    WAKE_EXTRA_URLS: str = ""
+    # Before a chat turn / document job, wait up to this long for sleeping dependencies (0 = off).
+    CHAT_WAKE_SECONDS: float = Field(default=0.0, ge=0, le=300)
+    RAG_WAKE_SECONDS: float = Field(default=0.0, ge=0, le=900)
+    # Keep this service awake while document jobs are queued or running, by pinging its own public
+    # URL (Render sets RENDER_EXTERNAL_URL). Off when empty.
+    KEEP_AWAKE_URL: Optional[str] = None
+    KEEP_AWAKE_INTERVAL_SECONDS: float = Field(default=240.0, ge=30)
 
     # Storage
     STORAGE_BACKEND: Literal["local", "s3"] = "local"
@@ -241,6 +253,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> List[str]:
         return [o.strip().rstrip("/") for o in self.FRONTEND_ORIGIN.split(",") if o.strip()]
+
+    @property
+    def wake_extra_urls(self) -> List[str]:
+        return [u.strip().rstrip("/") for u in self.WAKE_EXTRA_URLS.split(",") if u.strip()]
 
     @property
     def frontend_url(self) -> str:

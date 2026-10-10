@@ -5,6 +5,9 @@ import logging
 import time
 from typing import Optional
 
+import httpx
+from advancerag_common import wake
+
 from app.core.config import settings
 from app.core.context import request_id_var
 from app.core.time import utcnow
@@ -64,6 +67,8 @@ async def process_one(rag: Optional[RAGCoreClient] = None, storage: Optional[Sto
             retryable = exc.retryable if isinstance(exc, RAGCoreError) else True
             if not isinstance(exc, RAGCoreError):
                 logger.exception("job_handler_crashed", extra={"job_id": str(job_id)})
+            elif retryable:
+                wake.mark_unhealthy(settings.RAG_CORE_URL)  # re-check (and wake) RAG Core before the retry
             if retryable and attempt < max_attempts:
                 owned = await job_service.finish(db, job_id, attempt, status=job_status.PENDING, error=code, locked_at=None,
                                                  run_after=utcnow() + job_service.retry_delay(attempt))
@@ -103,6 +108,8 @@ class Worker:
         self._tasks = [asyncio.create_task(self._loop(i), name=f"worker-{i}") for i in range(self.concurrency)]
         self._tasks.append(asyncio.create_task(self._cleanup_loop(), name="worker-cleanup"))
         self._tasks.append(asyncio.create_task(self._stale_loop(), name="worker-stale-sweep"))
+        if settings.KEEP_AWAKE_URL:
+            self._tasks.append(asyncio.create_task(self._keep_awake_loop(), name="worker-keep-awake"))
         logger.info("worker_started", extra={"concurrency": self.concurrency})
 
     async def stop(self) -> None:
@@ -135,6 +142,22 @@ class Worker:
                         job_service.notify_worker()
             except Exception:
                 logger.exception("stale_sweep_failed")
+
+    async def _keep_awake_loop(self) -> None:
+        """Hosts like Render free put a service to sleep after 15 minutes without inbound requests,
+        even mid-job. While jobs are queued or running, request our own public /health so this
+        service (and, through its status polls, RAG Core) stays up until the work is done."""
+        url = settings.KEEP_AWAKE_URL.rstrip("/") + "/health"
+        while not self._stopping.is_set():
+            await asyncio.sleep(settings.KEEP_AWAKE_INTERVAL_SECONDS)
+            try:
+                async with session_scope() as db:
+                    active = await job_service.has_active_jobs(db)
+                if active:
+                    async with httpx.AsyncClient(timeout=20.0) as client:
+                        await client.get(url)
+            except Exception:
+                logger.warning("keep_awake_failed")
 
     async def _cleanup_loop(self) -> None:
         while not self._stopping.is_set():

@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     if settings.WAKE_DEPENDENCIES_ON_START:
         from advancerag_common.wake import wake_dependencies
 
-        wake_tasks = wake_dependencies([settings.RAG_CORE_URL, settings.LLM_SERVICE_URL])
+        wake_tasks = wake_dependencies([settings.RAG_CORE_URL, settings.LLM_SERVICE_URL], relay=settings.WAKE_RELAY_URL)
     yield
     for task in wake_tasks:
         task.cancel()

@@ -21,6 +21,7 @@ type PendingConfirm = { title: string; body: ReactNode; run: () => Promise<void>
 const NO_MESSAGES: Message[] = [];
 
 const PHASES: Record<string, string> = {
+  'agent.waking': 'Starting the AI service after a pause (this can take up to a minute)…',
   'agent.started': 'Thinking…',
   'retrieval.started': 'Searching your Knowledge Base…',
   'retrieval.completed': 'Reading sources…',

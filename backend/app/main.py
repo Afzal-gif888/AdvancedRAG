@@ -34,7 +34,8 @@ async def lifespan(app: FastAPI):
     if settings.WAKE_DEPENDENCIES_ON_START:
         from advancerag_common.wake import wake_dependencies
 
-        wake_tasks = wake_dependencies([settings.AGENT_CORE_URL, settings.RAG_CORE_URL])
+        wake_tasks = wake_dependencies([settings.AGENT_CORE_URL, settings.RAG_CORE_URL, *settings.wake_extra_urls],
+                                       relay=settings.WAKE_RELAY_URL)
     if settings.ENVIRONMENT in ("staging", "production") and not settings.email_configured:
         logger.warning("password_reset_email_disabled", extra={"hint": "set EMAIL_PROVIDER=resend with EMAIL_API_KEY and EMAIL_FROM"})
     try:

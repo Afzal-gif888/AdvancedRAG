@@ -51,6 +51,7 @@ export function capitalize(s: string): string {
 
 export const ERROR_TEXT: Record<string, string> = {
   AGENT_SERVICE_UNAVAILABLE: 'The AI service is temporarily unavailable.',
+  AI_SERVICE_STARTING: 'The AI service is still starting up after being idle. Please try again in a minute.',
   AGENT_SERVICE_ERROR: 'The AI service could not complete this request.',
   EMPTY_RESPONSE: 'The AI service returned an empty response.',
   GENERATION_FAILED: 'The response could not be generated.',

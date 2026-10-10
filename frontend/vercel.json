@@ -5,6 +5,18 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/wake/advancerag-agent-core",
+      "destination": "https://advancerag-agent-core.onrender.com/health"
+    },
+    {
+      "source": "/wake/advancerag-rag-core",
+      "destination": "https://advancerag-rag-core.onrender.com/health"
+    },
+    {
+      "source": "/wake/advancerag-llm",
+      "destination": "https://advancerag-llm.onrender.com/health"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://advancerag-backend.onrender.com/api/:path*"
     },
