@@ -52,8 +52,9 @@ upsert. No HTTP timeout bounds that work.
    for a document whose attempt is alive joins it and never starts a second ingestion.
 4. **Background run.** RAG Core indexes in a background task that heartbeats every 10 s.
    - Its stages are `parsing`, `embedding`, `writing`, `upserting`, `verifying`, `committing` and `done`.
-   - `verifying`: before a document can become `ready`, its first, middle and last vectors must be
-     read back from the vector store (Pinecone `GET /vectors/fetch` in the user's namespace;
+   - `verifying`: before a document can become `ready`, its first, middle and last vectors, and the
+     first vector of every 100-vector upsert request, must be read back from the vector store (at
+     most 54 ids for 5,000 chunks, one Pinecone `GET /vectors/fetch` in the user's namespace;
      eventually consistent, so up to `INGEST_VERIFY_SECONDS`, 20 s). Otherwise the attempt fails
      with the retryable `VECTOR_INDEX_UNVERIFIED` and removes what it wrote. A concurrent delete
      stops the check at once.
@@ -100,6 +101,56 @@ of one table the caller owns (404 otherwise). Queries are declarative: `count`, 
 in`) and `limit` ≤ 50. There is no SQL and no code execution; an unknown column or wrong
 operation returns 422 `TABLE_QUERY_INVALID`. Agent Core uses this for quantitative questions
 (docs/agent-core-architecture.md §7).
+
+### Ingestion speed (measured 2026-10-10; changes no stored value)
+
+Where the time goes, from the production logs (Render free, 0.1 CPU) and local measurements:
+
+| Stage | Share of one ingestion | Evidence |
+|---|---|---|
+| Embedding (CPU inference of the quantized bge-small ONNX model) | about 99% on Render free, 74-95% on a laptop | production: 74.3 s of about 75 s for 40 chunks; the 812-page worst case above: 885 of about 1,100 s |
+| PDF parse (pypdf, single-threaded Python) | up to 16% for real PDFs | 812 pages: about 175 s |
+| Pinecone upserts | 0.3-0.4 s per 100-vector request, 3-4% sequentially | production logs; 39 s for 4,824 chunks |
+| Tokenizing for the length check, chunking, CSV table parse, DB writes, verification | under 1% | 0.3 ms per chunk; chunking 10-20 ms; table parse 15-54 ms |
+
+What changed, and what each change was measured to do (same documents, same machine, vectors compared
+afterwards):
+
+- **Length-sorted embedding batches.** A batch is padded to its longest text, so similar lengths
+  per batch waste less compute. 22-24% less embedding time. Each text's vector does not depend on
+  its batch: **bit-identical** (max difference 0.0 over every variant and run), and results come back
+  in the caller's order.
+- **`EMBEDDING_BATCH_SIZE` default 32 -> 4.** On 12 cores, batch 4 is 26% faster than 32; on one
+  thread it is up to 4x faster. Sorted batch sizes 2 and 4 are within noise of each other; 8 and 16
+  are 6-26% slower. Render already used 4. Vectors identical.
+- **Concurrent upserts** (`PINECONE_UPSERT_CONCURRENCY`, default 5 = one round trip per 500-vector
+  slice, at most 8): the upsert stage of a 410-chunk PDF went from 1.96 s to 0.53 s.
+- **Bounded retries** (`PINECONE_MAX_ATTEMPTS`, default 3, exponential backoff 0.5 s / 1 s, Retry-After
+  honoured up to 5 s) for upsert, fetch and delete only, and only for network errors, 429 and 5xx.
+  Searches are not retried. One transient Pinecone error used to fail the whole attempt and throw
+  away all of its embedding work (up to an hour on Render free).
+- **Stronger verification** before `ready`: one vector of every 100-vector upsert request is read
+  back (at most 54 ids for 5,000 chunks, still one fetch call), so a request that was acknowledged
+  but not stored cannot be missed.
+
+End to end, 12-core laptop, simulated Pinecone latency from production, old code with its defaults
+against new code with its defaults (fastest of two interleaved runs; the machine was shared, so
+single runs vary by up to 3x): 1,000-row CSV (209 chunks) 18.7 -> 14.3 s (-24%), 30-page PDF
+(124 chunks) 11.0 -> 6.8 s (-38%), 100-page PDF (410 chunks) 35.6 -> 22.4 s (-37%). With Render's
+own settings (one thread, batch 4, slice 32) only sorting and the concurrent upserts apply:
+1,000-row CSV 45.4 -> 42.4 s (-7%, one run each). Ids, metadata and vectors were identical to the
+old code on the same bytes.
+
+Not changed, and why:
+
+- **Embedding is still CPU-bound.** On Render free (0.1 CPU) a document needs about 1-2 s per chunk,
+  so the 5,000-chunk limit would take about two hours, more than the one-hour ingestion ceiling.
+  No code change fixes that; it needs more CPU.
+- **Overlapping embedding with upserting** would hide at most 3-4% and complicates the cleanup
+  guarantees. **Batched token counting** was no faster on one core (0.123 s against 0.125 s).
+  **Faster PDF extraction** (another library) would change the extracted text and so the chunks.
+  **Resuming a failed attempt** without re-embedding is the largest remaining win for big documents
+  but needs durable vectors per slice and a looser "a failed attempt leaves nothing" rule.
 
 ## 2. Frozen parameters
 

@@ -164,11 +164,17 @@ async def ingest(db: AsyncSession, svc: Services, *, document_id: uuid.UUID, use
             "timings": timings}
 
 
+def verification_ids(document_id: uuid.UUID, count: int) -> List[str]:
+    """First, middle and last vector plus the first vector of every 100-vector upsert request, so a
+    request that did not land cannot go unnoticed. At most 54 ids for 5000 chunks: one fetch call."""
+    return [chunk_id(document_id, i) for i in sorted({0, count // 2, count - 1, *range(0, count, 100)})]
+
+
 async def _verify_vectors(svc: Services, control, user_id: uuid.UUID, document_id: uuid.UUID, count: int, db: AsyncSession) -> None:
     """A document is only reported indexed once its vectors can be read back from the store
-    (first, middle and last). Pinecone is eventually consistent, so this waits a bounded time.
+    (see verification_ids). Pinecone is eventually consistent, so this waits a bounded time.
     A miss caused by a concurrent delete (it removed vectors this attempt wrote) stops at once."""
-    sample = [chunk_id(document_id, i) for i in sorted({0, count // 2, count - 1})]
+    sample = verification_ids(document_id, count)
     deadline = time.monotonic() + svc.settings.INGEST_VERIFY_SECONDS
     while True:
         if await svc.vectors.count_existing(user_id, sample, db=db) == len(sample):

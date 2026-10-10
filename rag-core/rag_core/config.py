@@ -34,7 +34,9 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
     # Optional guard: if set, must equal the model's real output dimension (384 for bge-small).
     EMBEDDING_DIMENSIONS: Optional[int] = Field(default=None, ge=16, le=4096)
-    EMBEDDING_BATCH_SIZE: int = Field(default=32, ge=1, le=256)
+    # Texts per model call. Measured (docs/rag-architecture.md, "Ingestion speed"): 4 is the fastest on CPU,
+    # 26% faster than 32 on 12 cores and up to 4x faster on one thread; the vectors are identical.
+    EMBEDDING_BATCH_SIZE: int = Field(default=4, ge=1, le=256)
     EMBEDDING_THREADS: Optional[int] = Field(default=None, ge=1, le=64)
     # Where the model files are downloaded on first use (~70 MB for bge-small).
     EMBEDDING_CACHE_DIR: str = "var/models"
@@ -45,6 +47,12 @@ class Settings(BaseSettings):
     PINECONE_INDEX: Optional[str] = None
     PINECONE_INDEX_HOST: Optional[str] = None  # optional; resolved from the control plane otherwise
     PINECONE_API_URL: str = "https://api.pinecone.io"
+    # Ingestion writes: 100-vector upsert requests sent this many at a time (one 500-vector slice =
+    # 5 requests, so 5 is one round trip per slice instead of five), and each request/fetch/delete
+    # is tried at most PINECONE_MAX_ATTEMPTS times (429/5xx/network errors only, exponential backoff).
+    # A transient Pinecone error must not throw away the embedding work of a whole document.
+    PINECONE_UPSERT_CONCURRENCY: int = Field(default=5, ge=1, le=8)
+    PINECONE_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=5)
 
     RERANKER: Literal["pinecone", "none"] = "pinecone"
     RERANK_MODEL: str = "bge-reranker-v2-m3"

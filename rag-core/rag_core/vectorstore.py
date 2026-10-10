@@ -4,8 +4,10 @@ DB with brute-force cosine search (development/tests only — refused in product
 Isolation: every user gets their own Pinecone namespace, and queries are additionally filtered
 to the requested document ids.
 """
+import asyncio
 import logging
 import math
+import random
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -61,8 +63,9 @@ class PineconeStore(VectorStore):
     name = "pinecone"
 
     def __init__(self, *, api_key: str, index: str, dimensions: int, api_url: str, host: Optional[str] = None,
-                 timeout: float = 30.0, transport=None):
+                 timeout: float = 30.0, transport=None, upsert_concurrency: int = 1, max_attempts: int = 1):
         self._key, self.index, self.dimensions = api_key, index, dimensions
+        self.upsert_concurrency, self.max_attempts = max(1, upsert_concurrency), max(1, max_attempts)
         self._host = host
         self._control = httpx.AsyncClient(base_url=api_url.rstrip("/"), timeout=timeout, transport=transport)
         self._data: Optional[httpx.AsyncClient] = None
@@ -107,27 +110,77 @@ class PineconeStore(VectorStore):
             self._data = httpx.AsyncClient(base_url=base, timeout=self._timeout, transport=self._transport)
         return self._data
 
-    async def _post(self, path: str, body: dict) -> dict:
-        client = await self._client()
+    @staticmethod
+    async def _backoff(attempt: int, retry_after: Optional[str] = None) -> None:
+        """Exponential (0.5 s, 1 s, 2 s ...) plus a little jitter; a numeric Retry-After is honoured up to 5 s."""
+        delay = 0.5 * 2 ** (attempt - 1)
         try:
-            r = await client.post(path, json=body, headers=self._headers())
-        except httpx.HTTPError:
-            raise errors.vector_store_unavailable()
-        if not r.is_success:
-            log.warning("pinecone_http_error", extra={"status": r.status_code, "path": path})
+            delay = max(delay, min(float(retry_after), 5.0)) if retry_after else delay
+        except ValueError:
+            pass
+        await asyncio.sleep(delay + random.uniform(0, 0.25))
+
+    async def _send(self, method: str, path: str, attempts: int = 1, **kwargs) -> httpx.Response:
+        """One request, retried at most `attempts` times in total, and only for failures that can be
+        transient: network errors, 429 and 5xx. Callers pass attempts > 1 only for idempotent calls
+        (upsert / fetch / delete by deterministic id)."""
+        client = await self._client()
+        for attempt in range(1, attempts + 1):
+            last = attempt == attempts
+            try:
+                r = await client.request(method, path, headers=self._headers(), **kwargs)
+            except httpx.HTTPError:
+                if last:
+                    raise errors.vector_store_unavailable()
+                log.warning("pinecone_retry", extra={"path": path, "attempt": attempt, "reason": "network"})
+                await self._backoff(attempt)
+                continue
+            if r.is_success:
+                return r
+            log.warning("pinecone_http_error", extra={"status": r.status_code, "path": path, "attempt": attempt})
             if r.status_code in (401, 403):
                 raise errors.ServiceError(errors.VECTOR_STORE_MISCONFIGURED, "Pinecone rejected the configured API key.", 503, retryable=True)
+            if (r.status_code == 429 or r.status_code >= 500) and not last:
+                await self._backoff(attempt, r.headers.get("retry-after"))
+                continue
             raise errors.vector_store_unavailable()
+        raise errors.vector_store_unavailable()  # unreachable: the last attempt returns or raises
+
+    async def _post(self, path: str, body: dict, attempts: int = 1) -> dict:
+        r = await self._send("POST", path, attempts, json=body)
         return r.json() if r.content else {}
 
     async def upsert(self, user_id, records, db=None):
+        namespace = namespace_for(user_id)
+        batches = [records[i : i + 100] for i in range(0, len(records), 100)]
+        gate = asyncio.Semaphore(self.upsert_concurrency)
+        failed = False
+
+        async def send(batch):
+            nonlocal failed
+            async with gate:  # bounded: at most `upsert_concurrency` requests in flight
+                if failed:
+                    return  # a sibling request already failed for good: start nothing more
+                try:
+                    await self._post("/vectors/upsert", {
+                        "namespace": namespace,
+                        "vectors": [{"id": r.id, "values": r.values, "metadata": r.metadata} for r in batch],
+                    }, attempts=self.max_attempts)
+                except BaseException:
+                    failed = True
+                    raise
+
         async with timed("vector_upsert", store="pinecone"):
-            for i in range(0, len(records), 100):
-                batch = records[i : i + 100]
-                await self._post("/vectors/upsert", {
-                    "namespace": namespace_for(user_id),
-                    "vectors": [{"id": r.id, "values": r.values, "metadata": r.metadata} for r in batch],
-                })
+            tasks = [asyncio.create_task(send(b)) for b in batches]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                # One request failed for good: stop the rest. Anything that already landed is inside the
+                # vector extent the ingestion recorded first, so its cleanup removes it.
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
 
     async def query(self, user_id, vector, top_k, document_ids, db=None):
         async with timed("vector_query", store="pinecone"):
@@ -145,19 +198,14 @@ class PineconeStore(VectorStore):
             return
         async with timed("vector_delete", store="pinecone"):
             for i in range(0, len(ids), 1000):
-                await self._post("/vectors/delete", {"namespace": namespace_for(user_id), "ids": ids[i : i + 1000]})
+                await self._post("/vectors/delete", {"namespace": namespace_for(user_id), "ids": ids[i : i + 1000]},
+                                 attempts=self.max_attempts)
 
     async def count_existing(self, user_id, ids, db=None):
-        client = await self._client()
         found = 0
         for i in range(0, len(ids), 100):
             params = [("namespace", namespace_for(user_id))] + [("ids", x) for x in ids[i : i + 100]]
-            try:
-                r = await client.get("/vectors/fetch", params=params, headers=self._headers())
-            except httpx.HTTPError:
-                raise errors.vector_store_unavailable()
-            if not r.is_success:
-                raise errors.vector_store_unavailable()
+            r = await self._send("GET", "/vectors/fetch", self.max_attempts, params=params)
             found += len((r.json() or {}).get("vectors") or {})
         return found
 
@@ -215,6 +263,8 @@ def build_vector_store(cfg: Settings, dimensions: int) -> VectorStore:
         api_url=cfg.PINECONE_API_URL,
         host=cfg.PINECONE_INDEX_HOST,
         timeout=cfg.HTTP_TIMEOUT_SECONDS,
+        upsert_concurrency=cfg.PINECONE_UPSERT_CONCURRENCY,
+        max_attempts=cfg.PINECONE_MAX_ATTEMPTS,
     )
 
 
