@@ -72,6 +72,8 @@ export default function LoginScreen() {
 
             {step === 'register' && (
               <input
+                id="full-name"
+                name="name"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Full name"
@@ -82,6 +84,8 @@ export default function LoginScreen() {
               />
             )}
             <input
+              id="email"
+              name="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -91,6 +95,8 @@ export default function LoginScreen() {
               style={{ ...inputStyle, marginBottom: '12px' }}
             />
             <input
+              id="password"
+              name="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

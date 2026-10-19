@@ -395,7 +395,7 @@ export default function MainApp() {
                   {dragTarget === 'panel' ? 'Drop to upload' : 'Upload Documents'}
                 </div>
                 <div style={{ fontSize: '0.8rem' }}>Click or drag files here · {ACCEPTED_FILE_LABEL}</div>
-                <input type="file" accept={ACCEPTED_FILE_TYPES} multiple style={{ display: 'none' }} onChange={onFileInput} data-testid="kb-upload" />
+                <input name="documents" type="file" accept={ACCEPTED_FILE_TYPES} multiple style={{ display: 'none' }} onChange={onFileInput} data-testid="kb-upload" />
               </label>
 
               {(documents.length > 0 || pendingUploads.length > 0) && (
@@ -448,6 +448,7 @@ export default function MainApp() {
             <div key={chat.id} className={`history-item ${chat.id === activeConversationId ? 'active' : ''}`} onClick={() => openChat(chat.id)}>
               {editingChatId === chat.id ? (
                 <input
+                  name="chat-title"
                   autoFocus
                   value={editTitle}
                   maxLength={200}
@@ -583,6 +584,8 @@ export default function MainApp() {
                 <FileText size={20} />
               </button>
               <textarea
+                id="composer"
+                name="message"
                 ref={composerRef}
                 className="composer-textarea"
                 placeholder="Ask AdvancedRAG anything..."
@@ -666,7 +669,7 @@ function SearchModal({ onClose, onOpen }: { onClose: () => void; onOpen: (id: st
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ marginTop: '10vh', alignSelf: 'flex-start' }}>
         <div className="composer-wrapper" style={{ padding: '4px 12px', display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
           <Search size={18} style={{ color: 'var(--text-secondary)' }} />
-          <input autoFocus placeholder="Search chats..." value={query} maxLength={200} onChange={(e) => setQuery(e.target.value)}
+          <input name="chat-search" autoFocus placeholder="Search chats..." value={query} maxLength={200} onChange={(e) => setQuery(e.target.value)}
             style={{ flex: 1, padding: '12px', fontSize: '1rem' }} />
         </div>
         {query.trim() && (
@@ -710,7 +713,7 @@ function ProfileModal({ onClose }: { onClose: () => void }) {
     <Modal title="Profile" onClose={onClose}>
       <div className="setting-row">
         <span style={{ fontWeight: 500 }}>Name</span>
-        <input value={name} maxLength={100} onChange={(e) => setName(e.target.value)} style={fieldStyle} />
+        <input name="chat-name" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} style={fieldStyle} />
       </div>
       <div className="setting-row" style={{ marginTop: '16px' }}>
         <span style={{ fontWeight: 500 }}>Email</span>
@@ -870,7 +873,7 @@ function ShareModal({ conversationId, onClose }: { conversationId: string | null
             Messages you send after creating your link won't be shared. Anyone with the URL will be able to view the shared chat.
           </p>
           {url && (
-            <input readOnly value={url} onFocus={(e) => e.target.select()} style={{ ...inputStyle, fontSize: '0.85rem', marginBottom: 12 }} />
+            <input name="share-link" readOnly value={url} onFocus={(e) => e.target.select()} style={{ ...inputStyle, fontSize: '0.85rem', marginBottom: 12 }} />
           )}
           {active && !url && (
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: 12 }}>

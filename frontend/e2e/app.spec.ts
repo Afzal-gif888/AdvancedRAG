@@ -355,3 +355,48 @@ test('every destructive action uses the in-app dialog: document delete, clear al
   await expect(page.getByText('Sign up with email')).toBeVisible();
   expect(nativeDialog).toBe(false);
 });
+
+test('a first visit makes no failing request, and every form field is named for autofill', async ({ page }) => {
+  const failed: string[] = [];
+  const consoleErrors: string[] = [];
+  let refreshCalls = 0;
+  page.on('response', (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${new URL(r.url()).pathname}`); });
+  page.on('request', (r) => { if (r.url().includes('/auth/refresh')) refreshCalls++; });
+  page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+
+  await page.goto('/');
+  await expect(page.getByText('Sign up with email')).toBeVisible();
+  // Never signed in on this browser: no cookie to try, so no refresh call (it would be a guaranteed 401).
+  expect(refreshCalls).toBe(0);
+
+  for (const open of ['Sign up with email', 'Log in']) {
+    await page.goto('/');
+    await page.getByRole('button', { name: open, exact: true }).click();
+    const unnamed = await page.locator('input:visible, textarea:visible').evaluateAll(
+      (els) => els.filter((e) => !(e as HTMLInputElement).id && !(e as HTMLInputElement).name).length,
+    );
+    expect(unnamed, `inputs without id or name on "${open}"`).toBe(0);
+  }
+  expect(failed).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
+test('a signed-in browser still restores its session, and logging out forgets it', async ({ page }) => {
+  await register(page);
+  let refreshCalls = 0;
+  page.on('request', (r) => { if (r.url().includes('/auth/refresh')) refreshCalls++; });
+
+  await page.reload();
+  await expect(page.getByText('How can I help you today?')).toBeVisible(); // restored through the cookie
+  expect(refreshCalls).toBe(1);
+
+  await page.locator('.sidebar-footer').click();
+  await page.getByText('Log out').click();
+  await expect(page.getByText('Sign up with email')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('advancedrag.signed-in'))).toBeNull();
+
+  refreshCalls = 0;
+  await page.reload();
+  await expect(page.getByText('Sign up with email')).toBeVisible();
+  expect(refreshCalls).toBe(0); // forgotten: no needless 401 after a sign-out either
+});

@@ -71,7 +71,7 @@ export function ForgotPasswordPage() {
       ) : (
         <form onSubmit={submit} noValidate>
           <p style={{ textAlign: 'center', marginBottom: 16 }}>Enter your email and we'll send you a reset link</p>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" autoComplete="email" style={inputStyle} autoFocus />
+          <input id="reset-email" name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" autoComplete="email" style={inputStyle} autoFocus />
           <FormMessage error={error} />
           <button type="submit" className="login-btn login-btn-primary" disabled={busy || !email.trim()} style={{ marginTop: 16, opacity: busy || !email.trim() ? 0.5 : 1 }}>
             {busy ? 'Sending…' : 'Send reset link'}
@@ -136,8 +136,8 @@ export function ResetPasswordPage() {
       ) : (
         <form onSubmit={submit} noValidate>
           <p style={{ textAlign: 'center', marginBottom: 16 }}>Choose a new password</p>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password" autoComplete="new-password" maxLength={128} style={{ ...inputStyle, marginBottom: 12 }} autoFocus />
-          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Confirm new password" autoComplete="new-password" maxLength={128} style={inputStyle} />
+          <input id="new-password" name="new-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password" autoComplete="new-password" maxLength={128} style={{ ...inputStyle, marginBottom: 12 }} autoFocus />
+          <input id="confirm-password" name="confirm-password" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Confirm new password" autoComplete="new-password" maxLength={128} style={inputStyle} />
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 8 }}>
             At least 8 characters, including a letter and a number.
           </div>

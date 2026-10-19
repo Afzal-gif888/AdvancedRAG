@@ -49,6 +49,31 @@ async function toApiError(response: Response): Promise<ApiError> {
  * The access token lives only in memory. The refresh token is an HttpOnly cookie the
  * browser sends to /auth/* automatically — JavaScript never sees it.
  */
+/**
+ * A non-secret marker, "this browser has signed in before". It only decides whether the app tries the
+ * HttpOnly refresh cookie at start-up: a first-time visitor has no session, so the request would be a
+ * guaranteed 401 that the browser prints as a red console error. The marker grants nothing; the cookie
+ * and the access token still do all the authenticating.
+ */
+const SESSION_HINT = 'advancedrag.signed-in';
+
+function setSessionHint(signedIn: boolean): void {
+  try {
+    if (signedIn) localStorage.setItem(SESSION_HINT, '1');
+    else localStorage.removeItem(SESSION_HINT);
+  } catch {
+    // storage blocked (private mode): the app then simply always tries the cookie
+  }
+}
+
+function hasSessionHint(): boolean {
+  try {
+    return localStorage.getItem(SESSION_HINT) !== null;
+  } catch {
+    return true;
+  }
+}
+
 class ApiClient {
   private accessToken: string | null = null;
   private refreshInFlight: Promise<TokenResponse | null> | null = null;
@@ -56,6 +81,11 @@ class ApiClient {
 
   setAccessToken(token: string | null) {
     this.accessToken = token;
+  }
+
+  /** False for a browser that has never signed in: start-up can skip the pointless refresh call. */
+  mayHaveSession(): boolean {
+    return hasSessionHint();
   }
 
   /**
@@ -70,10 +100,12 @@ class ApiClient {
           const response = await fetch(`${API_BASE_URL}/auth/refresh`, { method: 'POST', credentials: 'include' });
           if (!response.ok) {
             this.accessToken = null;
+            if (response.status === 401 || response.status === 403) setSessionHint(false); // definitely no session
             return null;
           }
           const data = (await response.json()) as TokenResponse;
           this.accessToken = data.access_token;
+          setSessionHint(true);
           return data;
         } catch {
           return null;
@@ -133,6 +165,7 @@ class ApiClient {
   async login(email: string, password: string): Promise<TokenResponse> {
     const data = await this.json<TokenResponse>('/auth/login', { method: 'POST', body: { email, password }, auth: false });
     this.accessToken = data.access_token;
+    setSessionHint(true);
     return data;
   }
 
@@ -144,6 +177,7 @@ class ApiClient {
       auth: false,
     });
     this.accessToken = data.access_token;
+    setSessionHint(true);
     return data;
   }
 
@@ -152,12 +186,14 @@ class ApiClient {
       await this.send('/auth/logout', { method: 'POST' });
     } finally {
       this.accessToken = null;
+      setSessionHint(false);
     }
   }
 
   async logoutAll() {
     await this.json<void>('/auth/logout-all', { method: 'POST' });
     this.accessToken = null;
+    setSessionHint(false);
   }
 
   me() {

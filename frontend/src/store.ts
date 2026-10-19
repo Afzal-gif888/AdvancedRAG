@@ -75,6 +75,11 @@ export const useAppStore = create<AppState>()(
 
       /** App start: no token in memory, so try the HttpOnly refresh cookie. */
       initAuth: async () => {
+        // Never signed in on this browser: no cookie to try, so skip the request (it would only be a 401).
+        if (!api.mayHaveSession()) {
+          set({ authStatus: 'anonymous', user: null });
+          return;
+        }
         const session = await api.refresh();
         if (session) set({ authStatus: 'authenticated', user: session.user });
         else set({ authStatus: 'anonymous', user: null });
