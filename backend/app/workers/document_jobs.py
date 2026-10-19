@@ -157,9 +157,16 @@ async def ingest_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
     # records the result of one that already finished, instead of starting a second ingestion.
     status = await rag.ingestion_status(document_id=doc.id, user_id=doc.user_id)
     if status is None or status.get("status") not in ("running", "succeeded"):
-        if not await storage.exists(doc.storage_key):
-            raise RAGCoreError("FILE_MISSING", retryable=False)
-        content = await storage.read_bytes(doc.storage_key)
+        content = None
+        if job.payload and "file_data" in job.payload:
+            import base64
+            content = base64.b64decode(job.payload["file_data"])
+            
+        if content is None:
+            if not await storage.exists(doc.storage_key):
+                raise RAGCoreError("FILE_MISSING", retryable=False)
+            content = await storage.read_bytes(doc.storage_key)
+            
         status = await rag.start_ingestion(
             document_id=doc.id, user_id=doc.user_id, filename=doc.filename, mime_type=doc.mime_type, content=content
         )

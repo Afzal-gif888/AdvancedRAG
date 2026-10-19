@@ -166,7 +166,15 @@ async def upload(db: AsyncSession, user_id: uuid.UUID, file: UploadFile, storage
         status=doc_status.UPLOADED,
     )
     db.add(doc)
-    job_service.enqueue(db, user_id, job_types.DOCUMENT_INGEST, resource_id=doc_id)
+    
+    payload = {}
+    if settings.STORAGE_BACKEND == "local":
+        import base64
+        file.file.seek(0)
+        content = await anyio.to_thread.run_sync(file.file.read)
+        payload["file_data"] = base64.b64encode(content).decode("ascii")
+        
+    job_service.enqueue(db, user_id, job_types.DOCUMENT_INGEST, resource_id=doc_id, payload=payload)
     try:
         await db.commit()
     except Exception:
