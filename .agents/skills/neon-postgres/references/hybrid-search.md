@@ -21,10 +21,14 @@ CREATE TABLE documents (
   embedding vector(1536),
   body_tsv tsvector GENERATED ALWAYS AS
     (to_tsvector('english', body)) STORED
+
+
 );
 ```
 
-Replace `1536` with the embedding model's dimension. Use the same model and preprocessing for stored-document and query embeddings, and choose a PostgreSQL text-search configuration appropriate for the corpus.
+Replace `1536` with the embedding model's dimension. Use the same model and preprocessing for stored-document and qu
+
+ery embeddings, and choose a PostgreSQL text-search configuration appropriate for the corpus.
 
 Create and validate each retriever independently before combining them. Follow [Vector search](vector-search.md) and [Full-text search](full-text-search.md) for their indexes, query operators, and tuning.
 
