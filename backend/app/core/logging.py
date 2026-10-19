@@ -3,6 +3,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 
+# pyrefly: ignore [missing-import]
 from advancerag_common.observability import redact
 
 from app.core.config import settings

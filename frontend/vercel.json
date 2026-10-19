@@ -17,8 +17,8 @@
       "destination": "https://advancerag-llm.onrender.com/health"
     },
     {
-      "source": "/api/:path*",
-      "destination": "https://advancerag-backend.onrender.com/api/:path*"
+      "source": "/api/(.*)",
+      "destination": "https://advancerag-backend.onrender.com/api/$1"
     },
     {
       "source": "/((?!api/|assets/|favicon\\.svg).*)",

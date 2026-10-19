@@ -34,7 +34,7 @@ def relay_for(base_url: str, relay: Optional[str]) -> Optional[str]:
 
 async def _get(url: str, timeout: float) -> Optional[int]:
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0))) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)), follow_redirects=True) as client:
             return (await client.get(url)).status_code
     except httpx.HTTPError:
         return None
