@@ -1,10 +1,10 @@
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone 
 
 # pyrefly: ignore [missing-import]
-from advancerag_common.observability import redact
+from advancerag_common.observability import redact 
 
 from app.core.config import settings
 from app.core.context import get_request_id
@@ -18,6 +18,8 @@ class JsonFormatter(logging.Formatter):
             "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
+
+
             "msg": record.getMessage(),
             "request_id": getattr(record, "request_id", None) or get_request_id(),
         }
