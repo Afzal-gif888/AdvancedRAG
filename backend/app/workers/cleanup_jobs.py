@@ -10,7 +10,7 @@ Every path is bounded: no job or document can be retried forever.
 import logging
 from datetime import timedelta
 
-from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -18,7 +18,7 @@ from app.core.time import utcnow
 from app.db.models import AuthToken, BackgroundJob, Document, UserSession
 from app.db.models import document as doc_status
 from app.db.models import job as job_status
-from app.services import job_service, message_service
+from app.services import document_service, job_service, message_service
 
 logger = logging.getLogger("advancerag.jobs")
 
@@ -105,7 +105,8 @@ async def reconcile_documents(db: AsyncSession) -> dict:
             logger.error("document_delete_abandoned", extra={"document_id": str(doc.id)})
             continue
         job_service.enqueue(db, doc.user_id, job_status.DOCUMENT_DELETE, resource_id=doc.id,
-                            payload={"storage_key": doc.storage_key}, max_attempts=settings.DELETE_JOB_MAX_ATTEMPTS)
+                            payload={"storage_key": doc.storage_key, "storage_backend": doc.storage_backend},
+                            max_attempts=settings.DELETE_JOB_MAX_ATTEMPTS)
         stats["redriven_delete"] += 1
 
     await db.commit()
@@ -140,8 +141,34 @@ async def purge_expired_auth_records(db: AsyncSession) -> None:
     await db.commit()
 
 
+async def purge_superseded_versions(db: AsyncSession) -> int:
+    """Superseded versions are kept for SUPERSEDED_RETENTION_DAYS (so a replacement can be rolled back), then
+    deleted like any other document: vectors, file and row, through the normal delete job."""
+    cutoff = utcnow() - timedelta(days=settings.SUPERSEDED_RETENTION_DAYS)
+    old = (await db.scalars(select(Document).where(Document.status == doc_status.SUPERSEDED, Document.superseded_at < cutoff))).all()
+    if old:
+        await document_service._soft_delete(db, old)
+        await db.commit()
+        job_service.notify_worker()
+        logger.info("superseded_versions_purged", extra={"count": len(old)})
+    return len(old)
+
+
+async def scrub_job_payloads(db: AsyncSession) -> None:
+    """Jobs written by earlier versions carried the whole file as base64 in `payload`. Once a job is finished
+    nothing needs it: drop that copy now instead of keeping it for the 30-day job retention."""
+    finished = "('succeeded','failed','cancelled')"
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        await db.execute(text(f"UPDATE background_jobs SET payload = payload - 'file_data' WHERE status IN {finished} AND payload ? 'file_data'"))
+    else:
+        await db.execute(text(f"UPDATE background_jobs SET payload = json_remove(payload, '$.file_data') WHERE status IN {finished} AND json_extract(payload, '$.file_data') IS NOT NULL"))
+    await db.commit()
+
+
 async def run_all(db: AsyncSession) -> None:
     await requeue_stale_jobs(db)
     await reconcile_documents(db)
     await recover_generations(db)
+    await purge_superseded_versions(db)
+    await scrub_job_payloads(db)
     await purge_expired_auth_records(db)

@@ -59,7 +59,7 @@ export interface Message {
   created_at: string;
 }
 
-export type DocumentStatus = 'uploaded' | 'processing' | 'ready' | 'failed';
+export type DocumentStatus = 'uploaded' | 'processing' | 'ready' | 'failed' | 'superseded';
 
 export interface DocumentInfo {
   id: string;
@@ -68,8 +68,36 @@ export interface DocumentInfo {
   size_bytes: number;
   status: DocumentStatus;
   processing_error: string | null;
+  /** How the text was obtained and what could not be made searchable (null until indexing finished). */
+  extraction?: ExtractionReport | null;
+  version?: number;
+  logical_id?: string | null;
+  replaces_id?: string | null;
+  /** True when the upload matched a document you already have (no new work was queued). */
+  duplicate?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExtractionWarning {
+  page: number | null;
+  code: string;
+  message: string;
+}
+
+export interface ExtractionReport {
+  method: 'native' | 'ocr' | 'mixed';
+  /** Some content is not searchable although the document is ready. */
+  partial: boolean;
+  total_pages: number | null;
+  native_pages: number;
+  ocr_pages: number;
+  blank_pages: number[];
+  unprocessed_pages: number[];
+  failed_pages: number[];
+  /** Tables turned into structured rows (only when PDF_TABLES is enabled): kind is lines | text | ocr_layout. */
+  tables?: { page: number; kind: string; rows: number; columns: number; header: boolean; continued: boolean }[];
+  warnings: ExtractionWarning[];
 }
 
 export interface ShareCreated {

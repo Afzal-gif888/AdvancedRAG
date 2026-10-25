@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<DocumentStatus | 'uploading', string> = {
   processing: 'Processing',
   ready: 'Ready',
   failed: 'Failed',
+  superseded: 'Older version',
 };
 
 export function StatusChip({ status, progress }: { status: DocumentStatus | 'uploading'; progress?: number }) {

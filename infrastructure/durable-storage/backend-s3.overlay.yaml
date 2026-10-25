@@ -1,0 +1,17 @@
+# Durable uploads in an S3-compatible bucket (Cloudflare R2, AWS S3, MinIO...). Recommended for anything beyond a
+# small volume: it keeps file bytes out of the database and the bucket can be versioned/replicated independently.
+#
+# Not read by Render; see backend-db.overlay.yaml for how it is applied and validated.
+#   python scripts/verify_production_config.py --overlay infrastructure/durable-storage/backend-s3.overlay.yaml
+service: advancerag-backend
+set:
+  STORAGE_BACKEND: s3
+  STORAGE_REGION: auto          # R2 uses "auto"; for AWS use the bucket's region, e.g. us-east-1
+remove:
+  - ALLOW_LOCAL_STORAGE_IN_PRODUCTION
+# Values to enter in the dashboard (secrets; never commit them):
+dashboard_secrets:
+  - STORAGE_ENDPOINT            # R2: https://<account-id>.r2.cloudflarestorage.com ; empty for AWS S3
+  - STORAGE_BUCKET
+  - STORAGE_ACCESS_KEY
+  - STORAGE_SECRET_KEY

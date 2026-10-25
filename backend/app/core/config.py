@@ -103,7 +103,12 @@ class Settings(BaseSettings):
     KEEP_AWAKE_INTERVAL_SECONDS: float = Field(default=240.0, ge=30)
 
     # Storage
-    STORAGE_BACKEND: Literal["local", "s3"] = "local"
+    # local: files on this machine's disk (ephemeral on most PaaS free tiers); s3: S3-compatible object storage
+    # (recommended: durable, scales); db: files in PostgreSQL (durable without extra infrastructure, for modest volumes).
+    STORAGE_BACKEND: Literal["local", "s3", "db"] = "local"
+    STORAGE_DB_PART_BYTES: int = Field(default=1024 * 1024, ge=64 * 1024, le=8 * 1024 * 1024)
+    # Where objects are materialised temporarily when handed to RAG Core (default: the system temp directory).
+    TEMP_DIR: Optional[str] = None
     LOCAL_STORAGE_PATH: str = "var/storage"
     # Set true only when LOCAL_STORAGE_PATH is a persistent, backed-up volume (e.g. a mounted disk).
     ALLOW_LOCAL_STORAGE_IN_PRODUCTION: bool = False
@@ -119,6 +124,12 @@ class Settings(BaseSettings):
     MAX_DOCUMENTS_PER_USER: int = 500
     MAX_STORAGE_BYTES_PER_USER: int = 2 * 1024 * 1024 * 1024
     MAX_JSON_BODY_BYTES: int = 1 * 1024 * 1024
+    # PNG/JPEG only matter when ALLOWED_UPLOAD_EXTENSIONS includes them (and RAG Core runs with OCR_ENABLED=true).
+    MAX_IMAGE_PIXELS: int = 40_000_000
+    # Older versions of a replaced document stay (hidden, restorable) this long before they are deleted.
+    SUPERSEDED_RETENTION_DAYS: int = Field(default=7, ge=0, le=365)
+    # Concurrent chat streams one user may hold open (each can trigger several LLM calls). 0 = unlimited.
+    MAX_CONCURRENT_STREAMS_PER_USER: int = Field(default=3, ge=0, le=100)
 
     # Messages
     MAX_MESSAGE_CHARS: int = 32_000
@@ -145,6 +156,7 @@ class Settings(BaseSettings):
     # How often running jobs are checked for a stopped heartbeat (cheap; separate from the 10-min
     # housekeeping so a crashed worker's job is recovered within ~JOB_STALE_AFTER + this).
     STALE_SWEEP_INTERVAL_SECONDS: float = Field(default=60.0, gt=0)
+    QUEUE_METRICS_INTERVAL_SECONDS: float = Field(default=30.0, gt=0)
 
     # Rate limiting
     RATE_LIMIT_ENABLED: bool = True
@@ -172,7 +184,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "COOKIE_SECURE", "FRONTEND_PUBLIC_URL", "REDIS_URL", "EMAIL_API_KEY", "INTERNAL_SERVICE_TOKEN", "COOKIE_DOMAIN",
-        "STORAGE_ENDPOINT", "STORAGE_REGION", "STORAGE_BUCKET", "STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY",
+        "TEMP_DIR", "STORAGE_ENDPOINT", "STORAGE_REGION", "STORAGE_BUCKET", "STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY",
         "SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD",
         "READINESS_REQUIRE_SERVICES", mode="before",
     )
@@ -221,8 +233,8 @@ class Settings(BaseSettings):
         if self.STORAGE_BACKEND == "s3":
             if not (self.STORAGE_BUCKET and self.STORAGE_ACCESS_KEY and self.STORAGE_SECRET_KEY):
                 problems.append("STORAGE_BUCKET, STORAGE_ACCESS_KEY and STORAGE_SECRET_KEY are required for s3 storage")
-        elif not self.ALLOW_LOCAL_STORAGE_IN_PRODUCTION:
-            problems.append("STORAGE_BACKEND=local loses files on redeploy; use s3 or set ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true for a persistent volume")
+        elif self.STORAGE_BACKEND == "local" and not self.ALLOW_LOCAL_STORAGE_IN_PRODUCTION:
+            problems.append("STORAGE_BACKEND=local loses files on redeploy; use s3 (or db) or set ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true for a persistent volume")
         if problems:
             raise ConfigError(f"Unsafe {self.ENVIRONMENT} configuration: " + "; ".join(problems))
         return self

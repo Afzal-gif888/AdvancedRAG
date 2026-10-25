@@ -18,6 +18,10 @@ FROZEN = {
     "MAX_CHUNKS_PER_DOCUMENT": 5000,
     "VECTOR_STORE": "pinecone",
     "EMBEDDING_PROVIDER": "local",
+    # Added with the extraction work: the defaults keep the baseline behaviour (opt-in features are off).
+    "CHUNKING_STRATEGY": "recursive",
+    "OCR_ENABLED": False,
+    "PINECONE_METRIC": "cosine",
 }
 
 

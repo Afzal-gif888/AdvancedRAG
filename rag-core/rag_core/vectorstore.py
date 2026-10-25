@@ -52,6 +52,20 @@ class VectorStore(ABC):
     async def count_existing(self, user_id: uuid.UUID, ids: List[str], db=None) -> int:
         """How many of `ids` can be read back (ingestion verification)."""
 
+    async def existing_ids(self, user_id: uuid.UUID, ids: List[str], db=None) -> set:
+        """Which of `ids` can be read back. Generic version on top of `count_existing`: a slice that is complete costs one
+        call, an incomplete slice is probed id by id (an audit tool, not a hot path)."""
+        present: set = set()
+        for i in range(0, len(ids), 100):
+            part = ids[i : i + 100]
+            if await self.count_existing(user_id, part, db=db) == len(part):
+                present.update(part)
+            else:
+                for one in part:
+                    if await self.count_existing(user_id, [one], db=db):
+                        present.add(one)
+        return present
+
     async def health(self) -> Tuple[bool, Optional[str]]:
         return True, None
 
@@ -63,8 +77,8 @@ class PineconeStore(VectorStore):
     name = "pinecone"
 
     def __init__(self, *, api_key: str, index: str, dimensions: int, api_url: str, host: Optional[str] = None,
-                 timeout: float = 30.0, transport=None, upsert_concurrency: int = 1, max_attempts: int = 1):
-        self._key, self.index, self.dimensions = api_key, index, dimensions
+                 timeout: float = 30.0, transport=None, upsert_concurrency: int = 1, max_attempts: int = 1, metric: str = "cosine"):
+        self._key, self.index, self.dimensions, self.metric = api_key, index, dimensions, metric
         self.upsert_concurrency, self.max_attempts = max(1, upsert_concurrency), max(1, max_attempts)
         self._host = host
         self._control = httpx.AsyncClient(base_url=api_url.rstrip("/"), timeout=timeout, transport=transport)
@@ -102,6 +116,15 @@ class PineconeStore(VectorStore):
                         errors.VECTOR_STORE_MISCONFIGURED,
                         f"Pinecone index dimension {info.get('dimension')} does not match the embedding model's "
                         f"{self.dimensions} dimensions; create the index with dimension {self.dimensions}.",
+                        503,
+                        retryable=True,
+                    )
+                index_metric = info.get("metric")
+                if index_metric and index_metric.lower() != self.metric.lower():
+                    raise errors.ServiceError(
+                        errors.VECTOR_STORE_MISCONFIGURED,
+                        f"Pinecone index metric {index_metric!r} does not match the expected {self.metric!r}; "
+                        "vectors are unit length and ranked by cosine similarity.",
                         503,
                         retryable=True,
                     )
@@ -209,6 +232,14 @@ class PineconeStore(VectorStore):
             found += len((r.json() or {}).get("vectors") or {})
         return found
 
+    async def existing_ids(self, user_id, ids, db=None):
+        present: set = set()
+        for i in range(0, len(ids), 100):
+            params = [("namespace", namespace_for(user_id))] + [("ids", x) for x in ids[i : i + 100]]
+            r = await self._send("GET", "/vectors/fetch", self.max_attempts, params=params)
+            present.update(((r.json() or {}).get("vectors") or {}).keys())
+        return present
+
     async def health(self):
         try:
             info = await self.describe()
@@ -216,6 +247,8 @@ class PineconeStore(VectorStore):
             return False, exc.code
         if info.get("dimension") != self.dimensions:
             return False, f"DIMENSION_MISMATCH: index has {info.get('dimension')}, embedding model produces {self.dimensions}"
+        if info.get("metric") and info["metric"].lower() != self.metric.lower():
+            return False, f"METRIC_MISMATCH: index uses {info['metric']}, expected {self.metric}"
         ready = (info.get("status") or {}).get("ready", True)
         return bool(ready), None if ready else "INDEX_NOT_READY"
 
@@ -245,6 +278,10 @@ class LocalVectorStore(VectorStore):
     async def delete(self, user_id, ids, db=None):
         return None  # rows are deleted with the chunks
 
+    async def existing_ids(self, user_id, ids, db=None):
+        rows = (await db.execute(select(Chunk.id, Chunk.embedding).where(Chunk.id.in_(list(ids)), Chunk.user_id == user_id))).all()
+        return {cid for cid, emb in rows if emb}
+
     async def count_existing(self, user_id, ids, db=None):
         rows = (await db.scalars(select(Chunk.embedding).where(Chunk.id.in_(list(ids)), Chunk.user_id == user_id))).all()
         return sum(1 for e in rows if e)
@@ -265,6 +302,7 @@ def build_vector_store(cfg: Settings, dimensions: int) -> VectorStore:
         timeout=cfg.HTTP_TIMEOUT_SECONDS,
         upsert_concurrency=cfg.PINECONE_UPSERT_CONCURRENCY,
         max_attempts=cfg.PINECONE_MAX_ATTEMPTS,
+        metric=cfg.PINECONE_METRIC,
     )
 
 

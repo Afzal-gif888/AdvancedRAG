@@ -82,6 +82,7 @@ class RetrievedChunk(BaseModel):
     document_id: uuid.UUID
     filename: str = Field(min_length=1, max_length=255)
     page: Optional[int] = Field(default=None, ge=1)
+    section: Optional[str] = Field(default=None, max_length=500)  # heading path, when the document has headings
     chunk_index: int = Field(ge=0)
     text: str = Field(min_length=1)
     score: float

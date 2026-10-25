@@ -1,0 +1,33 @@
+{
+ "stamp": "2026-10-23T21:53:50",
+ "machine": {
+  "platform": "Windows-11-10.0.26300-SP0",
+  "cpus": 12,
+  "python": "3.13.9"
+ },
+ "limits": {
+  "MAX_FILE_BYTES": 31457280,
+  "MAX_CHUNKS_PER_DOCUMENT": 5000,
+  "CHUNK_SIZE": 1200,
+  "CHUNK_OVERLAP": 200
+ },
+ "embedding_for_ladder": "fake (deterministic, near-zero cost)",
+ "ladder": [
+  {
+   "size_kb": 100,
+   "type": "text",
+   "outcome": "indexed",
+   "chunks": 143,
+   "seconds": 0.25,
+   "peak_rss_mb": 93.4,
+   "peak_before_mb": 87.7
+  }
+ ],
+ "real_embedding_sample": {
+  "model": "BAAI/bge-small-en-v1.5",
+  "chunks": 256,
+  "chunk_chars": 1000,
+  "seconds": 7.35,
+  "chunks_per_second": 34.8
+ }
+}

@@ -43,7 +43,8 @@ def build_evidence(chunks: List[RetrievedChunk], max_chars: int) -> Evidence:
         if kept and used + len(chunk.text) > max_chars:
             break
         page = f' page="{chunk.page}"' if chunk.page else ""
-        blocks.append(f'<source id="{chunk.source_id}" document="{_attr(chunk.filename)}"{page}>\n'
+        section = f' section="{_attr(chunk.section)}"' if chunk.section else ""
+        blocks.append(f'<source id="{chunk.source_id}" document="{_attr(chunk.filename)}"{page}{section}>\n'
                       f"{_neutralise(chunk.text)}\n</source>")
         used += len(chunk.text)
         kept.append(chunk)

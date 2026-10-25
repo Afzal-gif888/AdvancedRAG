@@ -9,11 +9,12 @@ import uuid
 from datetime import timedelta
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.time import utcnow
+from advancerag_common.observability import METRICS
 from app.db.models import BackgroundJob
 from app.db.models import job as job_status
 
@@ -104,6 +105,39 @@ async def finish(db: AsyncSession, job_id: uuid.UUID, attempt: int, **values) ->
     Returns False (nothing written) when the job was recovered by someone else meanwhile."""
     result = await db.execute(update(BackgroundJob).where(_owned(job_id, attempt)).values(**values))
     return result.rowcount == 1
+
+
+async def queue_stats(db: AsyncSession) -> dict:
+    """Depth and age of the queue, per job type: pending/running counts, the age of the oldest pending job
+    (a stalled worker shows up here first) and running jobs whose heartbeat stopped (stuck)."""
+    now = utcnow()
+    stats: dict = {}
+    rows = (await db.execute(select(BackgroundJob.job_type, BackgroundJob.status, func.count(), func.min(BackgroundJob.run_after))
+                             .where(BackgroundJob.status.in_((job_status.PENDING, job_status.RUNNING)))
+                             .group_by(BackgroundJob.job_type, BackgroundJob.status))).all()
+    for job_type, status, count, oldest in rows:
+        entry = stats.setdefault(job_type, {"pending": 0, "running": 0, "oldest_pending_age_s": 0.0, "stuck": 0})
+        entry[status] = count
+        if status == job_status.PENDING and oldest is not None:
+            entry["oldest_pending_age_s"] = max(0.0, (now - oldest).total_seconds())
+    cutoff = now - timedelta(seconds=settings.JOB_STALE_AFTER_SECONDS)
+    stuck = (await db.execute(select(BackgroundJob.job_type, func.count())
+                              .where(BackgroundJob.status == job_status.RUNNING, BackgroundJob.locked_at < cutoff)
+                              .group_by(BackgroundJob.job_type))).all()
+    for job_type, count in stuck:
+        stats.setdefault(job_type, {"pending": 0, "running": 0, "oldest_pending_age_s": 0.0, "stuck": 0})["stuck"] = count
+    return stats
+
+
+async def publish_queue_metrics(db: AsyncSession) -> dict:
+    stats = await queue_stats(db)
+    for job_type in {"document_ingest", "document_delete", *stats}:
+        s = stats.get(job_type, {"pending": 0, "running": 0, "oldest_pending_age_s": 0.0, "stuck": 0})
+        METRICS.set_gauge("queue_jobs", s["pending"], job_type=job_type, state="pending")
+        METRICS.set_gauge("queue_jobs", s["running"], job_type=job_type, state="running")
+        METRICS.set_gauge("queue_oldest_pending_age_seconds", round(s["oldest_pending_age_s"], 1), job_type=job_type)
+        METRICS.set_gauge("queue_stuck_jobs", s["stuck"], job_type=job_type)
+    return stats
 
 
 async def has_active_jobs(db: AsyncSession) -> bool:

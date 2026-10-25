@@ -7,20 +7,25 @@ HTTP calls, heartbeating the job on every poll. No HTTP timeout bounds the inges
 document simply stays `processing` while RAG Core is alive and working on it.
 """
 import asyncio
+import base64
 import logging
+import os
+import tempfile
 import time
+from pathlib import Path
 from typing import Optional
 
 from advancerag_common import wake
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import BackgroundJob, Document
 from app.db.models import document as doc_status
+from app.core.time import utcnow
 from app.db.models import job as job_status
 from app.integrations.rag_core import RAGCoreClient, RAGCoreError
-from app.integrations.storage import Storage
+from app.integrations.storage import Storage, file_sha256, get_storage_for, local_copy
 from app.services import document_service, job_service
 
 logger = logging.getLogger("advancerag.jobs")
@@ -37,6 +42,8 @@ SAFE_PROCESSING_ERRORS = {
     "INGESTION_TIMEOUT": f"Indexing took too long and was stopped. {NO_DATA_KEPT}",
     "INGESTION_INTERRUPTED": f"Indexing was interrupted. {NO_DATA_KEPT} Please try again.",
     "WORKER_CRASHED": f"Indexing was interrupted. {NO_DATA_KEPT} Please try again.",
+    "FILE_CORRUPT": "The stored file did not match what was uploaded. Please upload it again.",
+    "EMBEDDING_MODEL_MISMATCH": "This document was indexed with a different search model and must be re-indexed.",
 }
 DEFAULT_PROCESSING_ERROR = f"Document ingestion failed. {NO_DATA_KEPT}"
 
@@ -94,7 +101,7 @@ async def _discard_quietly(rag: RAGCoreClient, doc: Document) -> None:
         logger.warning("ingestion_discard_failed", extra={"document_id": str(doc.id)})
 
 
-async def _wait_for_ingestion(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClient, doc: Document, status: dict) -> None:
+async def _wait_for_ingestion(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClient, doc: Document, status: dict) -> dict:
     # The ceiling counts active polling time only: if the host sleeps, RAG Core is frozen too, so
     # wall-clock (or Windows' monotonic) time spent asleep must not turn into a "timeout".
     active, last = 0.0, time.monotonic()
@@ -107,7 +114,7 @@ async def _wait_for_ingestion(db: AsyncSession, job: BackgroundJob, rag: RAGCore
         last = now
         state = status.get("status")
         if state == "succeeded":
-            return
+            return status
         if state == "failed":
             # RAG Core already removed everything this attempt wrote.
             raise RAGCoreError(status.get("error_code") or "INGESTION_FAILED", retryable=bool(status.get("retryable")))
@@ -145,6 +152,57 @@ async def _wait_for_ingestion(db: AsyncSession, job: BackgroundJob, rag: RAGCore
         status = fresh
 
 
+def _legacy_payload_to_file(job: BackgroundJob) -> Optional[Path]:
+    """Jobs queued by the previous version carried the file as base64 in their payload. They are still
+    honoured (once), written to a temporary file; new jobs never carry file content."""
+    data = (job.payload or {}).get("file_data")
+    if not data:
+        return None
+    fd, name = tempfile.mkstemp(prefix="legacy-", dir=settings.TEMP_DIR or None)
+    with os.fdopen(fd, "wb") as out:
+        out.write(base64.b64decode(data))
+    return Path(name)
+
+
+async def _send_to_rag(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClient, doc: Document) -> dict:
+    """Hand the original file to RAG Core without loading it into memory: from storage (by the backend the
+    document was stored with) to a local path, integrity-checked, then streamed."""
+    legacy = _legacy_payload_to_file(job)
+    if legacy is not None:
+        try:
+            return await rag.start_ingestion(document_id=doc.id, user_id=doc.user_id, filename=doc.filename, mime_type=doc.mime_type, content=legacy)
+        finally:
+            legacy.unlink(missing_ok=True)
+    storage = get_storage_for(doc.storage_backend)
+    try:
+        exists = await storage.exists(doc.storage_key)
+    except Exception:
+        logger.exception("ingest_storage_error", extra={"document_id": str(doc.id), "storage_backend": doc.storage_backend})
+        raise RAGCoreError("STORAGE_UNAVAILABLE", retryable=True)
+    if not exists:
+        # The one failure that retrying cannot fix. The log says why it can happen: the object is not in the
+        # backend this document was stored with (typically `local` on an ephemeral disk after a restart).
+        logger.error("ingest_file_missing", extra={"document_id": str(doc.id), "storage_backend": doc.storage_backend,
+                                                   "attempt": job.attempts, "age_s": round((utcnow() - doc.created_at).total_seconds())})
+        raise RAGCoreError("FILE_MISSING", retryable=False)
+    try:
+        async with local_copy(storage, doc.storage_key) as path:
+            digest = await asyncio.to_thread(file_sha256, path)
+            if digest != doc.checksum_sha256 or path.stat().st_size != doc.size_bytes:
+                logger.error("ingest_file_corrupt", extra={"document_id": str(doc.id), "storage_backend": doc.storage_backend})
+                raise RAGCoreError("FILE_CORRUPT", retryable=False)
+            return await rag.start_ingestion(document_id=doc.id, user_id=doc.user_id, filename=doc.filename, mime_type=doc.mime_type, content=path)
+    except FileNotFoundError:
+        raise RAGCoreError("FILE_MISSING", retryable=False)
+    except RAGCoreError:
+        raise
+    except Exception as exc:
+        if isinstance(exc, (OSError, ConnectionError)):
+            logger.exception("ingest_storage_error", extra={"document_id": str(doc.id), "storage_backend": doc.storage_backend})
+            raise RAGCoreError("STORAGE_UNAVAILABLE", retryable=True) from exc
+        raise
+
+
 async def ingest_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClient, storage: Storage) -> None:
     doc = await db.scalar(select(Document).where(Document.id == job.resource_id))
     if doc is None or doc.status == doc_status.DELETED:
@@ -157,27 +215,19 @@ async def ingest_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
     # records the result of one that already finished, instead of starting a second ingestion.
     status = await rag.ingestion_status(document_id=doc.id, user_id=doc.user_id)
     if status is None or status.get("status") not in ("running", "succeeded"):
-        content = None
-        if job.payload and "file_data" in job.payload:
-            import base64
-            content = base64.b64decode(job.payload["file_data"])
-            
-        if content is None:
-            if not await storage.exists(doc.storage_key):
-                raise RAGCoreError("FILE_MISSING", retryable=False)
-            content = await storage.read_bytes(doc.storage_key)
-            
-        status = await rag.start_ingestion(
-            document_id=doc.id, user_id=doc.user_id, filename=doc.filename, mime_type=doc.mime_type, content=content
-        )
-    await _wait_for_ingestion(db, job, rag, doc, status)
+        await _heartbeat(db, job, "sending")
+        status = await _send_to_rag(db, job, rag, doc)
+    final = await _wait_for_ingestion(db, job, rag, doc, status)
 
     # The user may have deleted the document just as indexing finished.
     if (await _current_status(db, doc.id)) in (None, doc_status.DELETED):
         await _discard_quietly(rag, doc)
         raise JobCancelled("document_deleted")
-    await document_service.mark_status(db, doc.id, doc_status.READY)
+    # Ready + (if this is a new version) the old version superseded: one transaction, committed with the job outcome.
+    await document_service.finalize_ready(db, doc.id, (final or {}).get("extraction"))
     job.progress = "indexed"
+    if job.payload and "file_data" in job.payload:  # legacy jobs: do not keep a copy of the file in the job table
+        job.payload = {k: v for k, v in job.payload.items() if k != "file_data"}
 
 
 async def delete_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClient, storage: Storage) -> None:
@@ -193,7 +243,14 @@ async def delete_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
     await rag.delete_document(document_id=job.resource_id, user_id=job.user_id)
     key = payload.get("storage_key")
     if key:
-        await storage.delete(key)
+        await get_storage_for(payload.get("storage_backend")).delete(key)
+    # No copy of the document may outlive it: queued/finished ingest jobs of older versions of this code carried
+    # the file as base64 in their payload.
+    await db.execute(
+        update(BackgroundJob)
+        .where(BackgroundJob.resource_id == job.resource_id, BackgroundJob.job_type == job_status.DOCUMENT_INGEST, BackgroundJob.id != job.id)
+        .values(payload={})
+    )
     await db.execute(delete(Document).where(Document.id == job.resource_id, Document.status == doc_status.DELETED))
 
 

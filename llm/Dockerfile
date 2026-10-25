@@ -9,7 +9,8 @@ WORKDIR /srv
 
 COPY shared shared
 COPY llm/requirements.txt llm/requirements.txt
-RUN pip install --no-cache-dir ./shared -r llm/requirements.txt
+COPY constraints/llm.txt constraints/llm.txt
+RUN pip install --no-cache-dir -c constraints/llm.txt ./shared -r llm/requirements.txt
 
 COPY llm/llm_service llm/llm_service
 WORKDIR /srv/llm

@@ -7,6 +7,7 @@ from typing import Optional
 
 import httpx
 from advancerag_common import wake
+from advancerag_common.observability import METRICS, new_trace_id, trace_id_var
 
 from app.core.config import settings
 from app.core.context import request_id_var
@@ -35,12 +36,14 @@ async def process_one(rag: Optional[RAGCoreClient] = None, storage: Optional[Sto
         if job is None:
             return False
         token = request_id_var.set(f"job-{job.id.hex[:16]}")
+        trace_token = trace_id_var.set(new_trace_id())  # each job is its own trace; its calls to RAG Core carry it
         started = time.perf_counter()
         outcome = "error"
         # Every outcome is a compare-and-set on (id, running, attempt): if the stale-job sweep
         # recovered this job meanwhile (e.g. the machine slept past the lease), this run records
         # nothing and the recovered run takes over. No lost updates in either direction.
         job_id, attempt, max_attempts, job_type = job.id, job.attempts, job.max_attempts, job.job_type
+        resource_id, error_code = job.resource_id, None
         try:
             handler = HANDLERS.get(job.job_type)
             if handler is None:
@@ -64,6 +67,7 @@ async def process_one(rag: Optional[RAGCoreClient] = None, storage: Optional[Sto
             # Rollback expires loaded objects; reload explicitly (lazy loads are not allowed under asyncio).
             await db.refresh(job)
             code = exc.code if isinstance(exc, RAGCoreError) else "INTERNAL_ERROR"
+            error_code = code
             retryable = exc.retryable if isinstance(exc, RAGCoreError) else True
             if not isinstance(exc, RAGCoreError):
                 logger.exception("job_handler_crashed", extra={"job_id": str(job_id)})
@@ -81,17 +85,26 @@ async def process_one(rag: Optional[RAGCoreClient] = None, storage: Optional[Sto
                 outcome = "failed" if owned else "superseded"
             await db.commit()
         finally:
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            METRICS.inc("jobs_finished", job_type=job_type, outcome=outcome)
+            METRICS.observe_ms("job_duration", duration_ms, job_type=job_type, outcome=outcome)
+            if error_code:
+                METRICS.inc("job_errors", job_type=job_type, code=error_code)
             logger.info(
                 "job_finished",
                 extra={
                     "job_id": str(job_id),
                     "job_type": job_type,
+                    "document_id": str(resource_id) if resource_id else None,
                     "attempt": attempt,
+                    "max_attempts": max_attempts,
                     "outcome": outcome,
-                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "error_code": error_code,
+                    "duration_ms": duration_ms,
                 },
             )
             request_id_var.reset(token)
+            trace_id_var.reset(trace_token)
         return True
 
 
@@ -108,6 +121,7 @@ class Worker:
         self._tasks = [asyncio.create_task(self._loop(i), name=f"worker-{i}") for i in range(self.concurrency)]
         self._tasks.append(asyncio.create_task(self._cleanup_loop(), name="worker-cleanup"))
         self._tasks.append(asyncio.create_task(self._stale_loop(), name="worker-stale-sweep"))
+        self._tasks.append(asyncio.create_task(self._metrics_loop(), name="worker-queue-metrics"))
         if settings.KEEP_AWAKE_URL:
             self._tasks.append(asyncio.create_task(self._keep_awake_loop(), name="worker-keep-awake"))
         logger.info("worker_started", extra={"concurrency": self.concurrency})
@@ -142,6 +156,16 @@ class Worker:
                         job_service.notify_worker()
             except Exception:
                 logger.exception("stale_sweep_failed")
+
+    async def _metrics_loop(self) -> None:
+        """Queue depth and age as gauges, so a stalled queue is visible (and alertable) without reading logs."""
+        while not self._stopping.is_set():
+            try:
+                async with session_scope() as db:
+                    await job_service.publish_queue_metrics(db)
+            except Exception:
+                logger.warning("queue_metrics_failed")
+            await asyncio.sleep(settings.QUEUE_METRICS_INTERVAL_SECONDS)
 
     async def _keep_awake_loop(self) -> None:
         """Hosts like Render free put a service to sleep after 15 minutes without inbound requests,

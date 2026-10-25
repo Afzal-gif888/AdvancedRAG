@@ -12,6 +12,7 @@ not model judgement.
 import argparse
 import asyncio
 import json
+import os
 import re
 import time
 
@@ -19,6 +20,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 DEFAULT_KEY = "mock-freellmapi-key"
+# Optional fixed delay before every completion, to model a slow model in load tests (default 0: tests are unaffected).
+LATENCY_S = float(os.environ.get("MOCK_LLM_LATENCY_MS", "0")) / 1000
 
 _STOP = set("""what which when where who whom whose does did have has with from that this these those there their about
 into than then them they your yours mine ours please tell show give explain describe according document documents file files
@@ -102,6 +105,8 @@ def build_app(api_key: str = DEFAULT_KEY) -> FastAPI:
         if not authorized(request):
             return JSONResponse({"error": {"type": "invalid_api_key"}}, status_code=401)
         body = await request.json()
+        if LATENCY_S:
+            await asyncio.sleep(LATENCY_S)
         text = answer(body.get("messages") or [])
         model = f"mock/{body.get('model', 'auto')}"
         usage = {"prompt_tokens": 10, "completion_tokens": len(text.split()), "total_tokens": 10 + len(text.split())}
@@ -130,5 +135,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=3901)
     parser.add_argument("--key", default=DEFAULT_KEY)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--latency-ms", type=float, default=None, help="fixed delay before each completion (load tests)")
     args = parser.parse_args()
+    if args.latency_ms is not None:
+        LATENCY_S = args.latency_ms / 1000
     uvicorn.run(build_app(args.key), host=args.host, port=args.port, log_level="warning")

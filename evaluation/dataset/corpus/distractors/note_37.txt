@@ -1,0 +1,3 @@
+Site note 37
+
+The security guard at the Bergen site checks laptop bags only when an alarm has been triggered. Receipts for the Cobalt C3 workshop were collected by the team assistant and filed in the shared folder. The security guard at the Lyon site checks laptop bags only when an alarm has been triggered. The Indigo I6 firmware update was postponed because the weekly test run showed unstable readings. The Lyra L3 battery was replaced during the last service visit and the old cell was recycled. The warranty text for older Juniper J2 units was archived in the legal folder and is no longer maintained. The Ember E7 firmware update was postponed because the weekly test run showed unstable readings.

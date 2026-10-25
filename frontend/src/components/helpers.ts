@@ -24,8 +24,20 @@ export const primaryButtonStyle: CSSProperties = {
 export const dangerButtonStyle: CSSProperties = { ...primaryButtonStyle, background: '#dc2626', color: 'white' };
 
 // Must match the backend's ALLOWED_UPLOAD_EXTENSIONS (images need OCR in RAG Core first).
-export const ACCEPTED_FILE_TYPES = '.pdf,.txt,.md,.csv,.docx';
-export const ACCEPTED_FILE_LABEL = 'PDF, TXT, MD, CSV, DOCX';
+// Set VITE_ENABLE_IMAGE_UPLOADS=true only when the backend allows png/jpg/jpeg AND RAG Core runs with OCR_ENABLED=true.
+const IMAGES = (import.meta.env.VITE_ENABLE_IMAGE_UPLOADS as string | undefined) === 'true';
+export const ACCEPTED_FILE_TYPES = IMAGES ? '.pdf,.txt,.md,.csv,.docx,.png,.jpg,.jpeg' : '.pdf,.txt,.md,.csv,.docx';
+export const ACCEPTED_FILE_LABEL = IMAGES ? 'PDF, TXT, MD, CSV, DOCX, PNG, JPG' : 'PDF, TXT, MD, CSV, DOCX';
+
+/** One plain-language line for a document whose indexing finished but could not read everything. */
+export function extractionNotice(report: { partial?: boolean; unprocessed_pages?: number[]; failed_pages?: number[] } | null | undefined): string | null {
+  if (!report?.partial) return null;
+  const pages = [...(report.unprocessed_pages ?? []), ...(report.failed_pages ?? [])].sort((a, b) => a - b);
+  const list = pages.length > 8 ? `${pages.slice(0, 8).join(', ')} and ${pages.length - 8} more` : pages.join(', ');
+  return pages.length
+    ? `Partly searchable: ${pages.length === 1 ? 'page' : 'pages'} ${list} could not be read.`
+    : 'Partly searchable: some content could not be read.';
+}
 /** Mirrors the backend's MAX_UPLOAD_BYTES (25 MB). Checked before uploading: a browser cannot read
  * the server's 413 reply when the server stops reading an oversized body early (it reports a
  * network error instead), so the size is validated client-side; the server still enforces it. */

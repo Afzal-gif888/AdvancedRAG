@@ -5,6 +5,7 @@ from .job import BackgroundJob
 from .message import Message
 from .session import UserSession
 from .share import Share
+from .stored_object import StoredObject, StoredObjectPart
 from .user import User
 
 __all__ = [
@@ -14,6 +15,8 @@ __all__ = [
     "Document",
     "Message",
     "Share",
+    "StoredObject",
+    "StoredObjectPart",
     "User",
     "UserSession",
     "conversation_documents",

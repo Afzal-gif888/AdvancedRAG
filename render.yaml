@@ -150,7 +150,8 @@ services:
         value: "1"
       # Free instances have no persistent disk: uploaded originals survive only until the service
       # restarts or sleeps. Indexing still works (it runs right after the upload); downloading or
-      # reprocessing an old original does not. For durable files, switch to s3 (Cloudflare R2).
+      # reprocessing an old original does not (the document then fails with FILE_MISSING). For durable files
+      # switch to s3 (Cloudflare R2) or db: see docs/operations/DURABLE_STORAGE.md (comment-only change; values untouched).
       - key: STORAGE_BACKEND
         value: local
       - key: ALLOW_LOCAL_STORAGE_IN_PRODUCTION

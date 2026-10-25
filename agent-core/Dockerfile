@@ -6,7 +6,8 @@ WORKDIR /srv
 
 COPY shared shared
 COPY agent-core/requirements.txt agent-core/requirements.txt
-RUN pip install --no-cache-dir ./shared -r agent-core/requirements.txt
+COPY constraints/agent-core.txt constraints/agent-core.txt
+RUN pip install --no-cache-dir -c constraints/agent-core.txt ./shared -r agent-core/requirements.txt
 
 COPY agent-core/agent_core agent-core/agent_core
 WORKDIR /srv/agent-core

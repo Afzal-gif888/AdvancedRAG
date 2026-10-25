@@ -10,11 +10,20 @@ from app.integrations.agent_core import AgentCoreClient, get_agent_client
 from app.middleware.rate_limit import hit_user_limit
 from app.schemas.common import Page, error_responses
 from app.schemas.message import MessageCreate, MessageResponse, SendMessageResponse
-from app.services import agent_service, message_service
+from app.services import agent_service, message_service, stream_limiter
 
 router = APIRouter()
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+async def _limited(events, user_id, token):
+    """Relay the stream and give the user's slot back however it ends (finished, failed, client gone)."""
+    try:
+        async for chunk in events:
+            yield chunk
+    finally:
+        stream_limiter.release(user_id, token)
 
 
 async def _message_rate_limit(user: CurrentUser) -> None:
@@ -76,8 +85,13 @@ async def stream_message(
 ):
     """Server-Sent Events. Validation/ownership errors are normal JSON errors (before the
     stream starts); AI failures arrive as an `error` event."""
-    turn = await message_service.prepare_turn(db, user, conversation_id, data)
-    return StreamingResponse(agent_service.stream_turn(agent, turn), media_type="text/event-stream", headers=SSE_HEADERS)
+    token = await stream_limiter.acquire(user.id)  # before anything is persisted: a refused turn leaves no messages behind
+    try:
+        turn = await message_service.prepare_turn(db, user, conversation_id, data)
+    except BaseException:
+        stream_limiter.release(user.id, token)
+        raise
+    return StreamingResponse(_limited(agent_service.stream_turn(agent, turn), user.id, token), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @router.post(
@@ -93,5 +107,10 @@ async def retry_message(
     agent: AgentCoreClient = Depends(get_agent_client),
 ):
     """Re-generates the latest failed/cancelled assistant message (SSE, same events as /stream)."""
-    turn = await message_service.prepare_retry(db, user, conversation_id, message_id)
-    return StreamingResponse(agent_service.stream_turn(agent, turn), media_type="text/event-stream", headers=SSE_HEADERS)
+    token = await stream_limiter.acquire(user.id)
+    try:
+        turn = await message_service.prepare_retry(db, user, conversation_id, message_id)
+    except BaseException:
+        stream_limiter.release(user.id, token)
+        raise
+    return StreamingResponse(_limited(agent_service.stream_turn(agent, turn), user.id, token), media_type="text/event-stream", headers=SSE_HEADERS)

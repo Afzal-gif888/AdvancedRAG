@@ -7,7 +7,7 @@ import re
 import time
 import uuid
 
-from advancerag_common.observability import METRICS, route_template
+from advancerag_common.observability import METRICS, new_trace_id, parse_traceparent, route_template, trace_id_var
 
 from app.core.context import db_time_var, request_id_var
 
@@ -29,6 +29,7 @@ class RequestContextMiddleware:
         # Only accept well-formed client IDs to avoid log injection.
         request_id = incoming if _VALID_REQUEST_ID.match(incoming) else uuid.uuid4().hex
         rid_token = request_id_var.set(request_id)
+        trace_token = trace_id_var.set(parse_traceparent(dict(scope["headers"]).get(b"traceparent", b"").decode("latin-1")) or new_trace_id())
         db_token = db_time_var.set([0.0, 0])
         scope.setdefault("state", {})["request_id"] = request_id
 
@@ -65,3 +66,4 @@ class RequestContextMiddleware:
             )
             db_time_var.reset(db_token)
             request_id_var.reset(rid_token)
+            trace_id_var.reset(trace_token)

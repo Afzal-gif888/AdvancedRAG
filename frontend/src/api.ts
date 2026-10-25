@@ -31,6 +31,14 @@ export class ApiError extends Error {
 
 type Json = Record<string, unknown> | unknown[];
 
+/** Statuses meaning "the backend is not answering right now" (cold start, restart, overload), not "you are signed out". */
+const TRANSIENT_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const REFRESH_RETRY_DELAYS_MS = [1500, 3000, 6000];
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Why the last refresh gave no session: the cookie is gone/invalid ('expired'), or the server did not answer ('unavailable'). */
+export type RefreshOutcome = 'ok' | 'expired' | 'unavailable';
+
 interface RequestOptions {
   method?: string;
   body?: Json | FormData;
@@ -42,6 +50,13 @@ async function toApiError(response: Response): Promise<ApiError> {
   const body = await response.json().catch(() => null);
   const err = body?.error;
   if (err) return new ApiError(response.status, err.code, err.message, err.details);
+  if (TRANSIENT_STATUS.has(response.status)) {
+    // The proxy answered, but the backend behind it did not (typically a free-tier service waking from sleep).
+    return new ApiError(response.status, 'SERVICE_STARTING', 'The service is starting up after a quiet period. This can take up to a minute; please try again shortly.');
+  }
+  if (response.status === 404 || response.status === 405) {
+    return new ApiError(response.status, 'ENDPOINT_NOT_FOUND', 'The server could not be reached at this address. If this persists, the deployment is misconfigured.');
+  }
   return new ApiError(response.status, 'HTTP_ERROR', 'Something went wrong. Please try again.');
 }
 
@@ -77,6 +92,7 @@ function hasSessionHint(): boolean {
 class ApiClient {
   private accessToken: string | null = null;
   private refreshInFlight: Promise<TokenResponse | null> | null = null;
+  lastRefreshOutcome: RefreshOutcome = 'ok';
   onSessionExpired: (() => void) | null = null;
 
   setAccessToken(token: string | null) {
@@ -95,21 +111,34 @@ class ApiClient {
    */
   refresh(): Promise<TokenResponse | null> {
     if (!this.refreshInFlight) {
-      const run = async () => {
-        try {
-          const response = await fetch(`${API_BASE_URL}/auth/refresh`, { method: 'POST', credentials: 'include' });
-          if (!response.ok) {
+      const run = async (): Promise<TokenResponse | null> => {
+        // Only 401/403 mean "no valid session". A network error or a 5xx/gateway error means the server is not
+        // answering (waking up, restarting): retry a few times with backoff and, if it is still down, report
+        // 'unavailable' so the caller does NOT sign the user out.
+        for (let attempt = 0; attempt <= REFRESH_RETRY_DELAYS_MS.length; attempt++) {
+          try {
+            const response = await fetch(`${API_BASE_URL}/auth/refresh`, { method: 'POST', credentials: 'include' });
+            if (response.ok) {
+              const data = (await response.json()) as TokenResponse;
+              this.accessToken = data.access_token;
+              this.lastRefreshOutcome = 'ok';
+              setSessionHint(true);
+              return data;
+            }
             this.accessToken = null;
-            if (response.status === 401 || response.status === 403) setSessionHint(false); // definitely no session
-            return null;
+            if (response.status === 401 || response.status === 403) {
+              this.lastRefreshOutcome = 'expired';
+              setSessionHint(false); // definitely no session
+              return null;
+            }
+            this.lastRefreshOutcome = 'unavailable';
+            if (!TRANSIENT_STATUS.has(response.status)) return null; // 404/405...: retrying cannot help
+          } catch {
+            this.lastRefreshOutcome = 'unavailable'; // network error
           }
-          const data = (await response.json()) as TokenResponse;
-          this.accessToken = data.access_token;
-          setSessionHint(true);
-          return data;
-        } catch {
-          return null;
+          if (attempt < REFRESH_RETRY_DELAYS_MS.length) await sleep(REFRESH_RETRY_DELAYS_MS[attempt]);
         }
+        return null;
       };
       const locks = (navigator as Navigator & { locks?: LockManager }).locks;
       const task = locks ? (locks.request('advancedrag-auth-refresh', run) as Promise<TokenResponse | null>) : run();
@@ -145,6 +174,10 @@ class ApiClient {
     if (response.status === 401 && opts.auth !== false) {
       const refreshed = await this.refresh();
       if (!refreshed) {
+        if (this.lastRefreshOutcome === 'unavailable') {
+          // The session may well be valid; the server just could not confirm it. Do not sign the user out.
+          throw new ApiError(503, 'SERVICE_STARTING', 'The service is starting up after a quiet period. Please try again in a moment.');
+        }
         this.onSessionExpired?.();
         throw await toApiError(response);
       }
@@ -303,7 +336,7 @@ class ApiClient {
       });
     let res = await attempt();
     if (res.status === 401 && (await this.refresh())) res = await attempt();
-    if (res.status === 401) this.onSessionExpired?.();
+    if (res.status === 401 && this.lastRefreshOutcome !== 'unavailable') this.onSessionExpired?.();
     if (res.status < 200 || res.status >= 300) {
       const err = (res.body as { error?: { code: string; message: string; details?: unknown } } | null)?.error;
       throw err ? new ApiError(res.status, err.code, err.message, err.details) : new ApiError(res.status, 'HTTP_ERROR', 'Upload failed.');
@@ -317,6 +350,21 @@ class ApiClient {
 
   reprocessDocument(id: string) {
     return this.json<DocumentInfo>(`/documents/${id}/reprocess`, { method: 'POST' });
+  }
+
+  /** Upload a new version of a ready document; the current version keeps working until the new one is indexed. */
+  async replaceDocument(id: string, file: File): Promise<DocumentInfo> {
+    const form = new FormData();
+    form.append('file', file);
+    return this.json<DocumentInfo>(`/documents/${id}/replace`, { method: 'POST', body: form });
+  }
+
+  listDocumentVersions(id: string) {
+    return this.json<DocumentInfo[]>(`/documents/${id}/versions`);
+  }
+
+  restoreDocumentVersion(id: string) {
+    return this.json<DocumentInfo>(`/documents/${id}/restore`, { method: 'POST' });
   }
 
   listConversationDocuments(conversationId: string) {

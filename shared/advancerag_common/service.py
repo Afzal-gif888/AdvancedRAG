@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from advancerag_common.observability import METRICS, get_request_id
+from advancerag_common.observability import METRICS, get_request_id, traceparent_header
 
 log = logging.getLogger("advancerag.errors")
 
@@ -76,6 +76,9 @@ def outbound_headers(token: Optional[str]) -> Dict[str, str]:
     rid = get_request_id()
     if rid:
         headers["X-Request-ID"] = rid
+    trace = traceparent_header()
+    if trace:
+        headers["traceparent"] = trace
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers

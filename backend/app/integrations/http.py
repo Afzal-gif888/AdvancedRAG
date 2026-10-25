@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Optional
 
 import httpx
-from advancerag_common.observability import METRICS
+from advancerag_common.observability import METRICS, traceparent_header
 
 from app.core.config import settings
 from app.core.context import get_request_id
@@ -39,6 +39,9 @@ def outbound_headers() -> Dict[str, str]:
     request_id = get_request_id()
     if request_id:
         headers["X-Request-ID"] = request_id
+    trace = traceparent_header()
+    if trace:
+        headers["traceparent"] = trace
     if settings.internal_token:
         headers["Authorization"] = f"Bearer {settings.internal_token}"
     return headers

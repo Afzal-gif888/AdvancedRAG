@@ -1,0 +1,75 @@
+{
+ "stamp": "2026-10-23T16:31:49",
+ "machine": {
+  "platform": "Windows-11-10.0.26300-SP0",
+  "cpus": 12,
+  "python": "3.13.9"
+ },
+ "limits": {
+  "MAX_FILE_BYTES": 31457280,
+  "MAX_CHUNKS_PER_DOCUMENT": 5000,
+  "CHUNK_SIZE": 1200,
+  "CHUNK_OVERLAP": 200
+ },
+ "embedding_for_ladder": "fake (deterministic, near-zero cost)",
+ "ladder": [
+  {
+   "size_kb": 100,
+   "type": "text",
+   "outcome": "indexed",
+   "chunks": 143,
+   "seconds": 0.16,
+   "peak_rss_mb": 93.3,
+   "peak_before_mb": 87.6
+  },
+  {
+   "size_kb": 1024,
+   "type": "text",
+   "outcome": "indexed",
+   "chunks": 1456,
+   "seconds": 0.76,
+   "peak_rss_mb": 124.5,
+   "peak_before_mb": 95.5
+  },
+  {
+   "size_kb": 5120,
+   "type": "text",
+   "outcome": "refused",
+   "code": "DOCUMENT_TOO_LARGE",
+   "retryable": false,
+   "message": "The document produces 7300 chunks; the limit is 5000 (roughly 5 MB of text). Split the document.",
+   "seconds": 0.22,
+   "peak_rss_mb": 124.5,
+   "peak_before_mb": 124.5
+  },
+  {
+   "size_kb": 10240,
+   "type": "text",
+   "outcome": "refused",
+   "code": "DOCUMENT_TOO_LARGE",
+   "retryable": false,
+   "message": "The document produces 14548 chunks; the limit is 5000 (roughly 5 MB of text). Split the document.",
+   "seconds": 1.15,
+   "peak_rss_mb": 147.9,
+   "peak_before_mb": 136.5
+  },
+  {
+   "size_kb": 25600,
+   "type": "text",
+   "outcome": "refused",
+   "code": "DOCUMENT_TOO_LARGE",
+   "retryable": false,
+   "message": "The document produces 36378 chunks; the limit is 5000 (roughly 5 MB of text). Split the document.",
+   "seconds": 2.73,
+   "peak_rss_mb": 221.4,
+   "peak_before_mb": 189.0
+  }
+ ],
+ "real_embedding_sample": {
+  "model": "BAAI/bge-small-en-v1.5",
+  "chunks": 128,
+  "chunk_chars": 1000,
+  "seconds": 34.36,
+  "chunks_per_second": 3.7
+ }
+}

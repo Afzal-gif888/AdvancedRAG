@@ -129,7 +129,7 @@ def safe_metadata(metadata: Optional[dict]) -> Dict[str, Any]:
 def safe_citations(citations: Any) -> List[dict]:
     if not isinstance(citations, list):
         return []
-    allowed = {"source_id", "document_id", "filename", "page", "chunk_id", "snippet"}
+    allowed = {"source_id", "document_id", "filename", "page", "section", "chunk_id", "snippet"}
     out = []
     for c in citations[:50]:
         if not isinstance(c, dict):

@@ -219,6 +219,10 @@ E2E = [
      ["-20", "minus 20"], "aurora_x2_spec.docx"),
 ]
 UNANSWERABLE = ["What is the Bluetooth range of the Aurora X2?", "What dental insurance do employees get?"]
+# The system's own abstain sentence (agent-core/agent_core/prompts.py ABSTAIN_MESSAGE) is the primary signal; the
+# regex below only catches free-form refusals from answers that did not go through the abstain path. Before this
+# line was added the check missed the abstain sentence and would have failed a correct run.
+ABSTAIN_SENTENCE = "i couldn't find sufficient evidence"
 REFUSAL = re.compile(r"(not (mention|specif|includ|contain|cover|state|provid|list|found|available)|doesn.t (mention|cover|specify|include|contain|say|list)|no (information|mention|details)|don.t (mention|cover|specify|include|contain)|do not (mention|cover|specify|include|contain|list))", re.I)
 
 
@@ -373,7 +377,8 @@ async def main():
                 print(f"\nQ: {q}\n   fact={'PASS' if fact else 'FAIL'} citation={'PASS' if cite else 'FAIL'} cited={cites} "
                       f"strategy={md.get('retrieval_strategy')} chunks={md.get('retrieved_chunks')} rewritten={md.get('query_rewritten')} model={md.get('model')}")
             else:
-                declined = bool(REFUSAL.search(re.sub(r"[*_`]", "", norm(answer))))  # ignore Markdown emphasis
+                cleaned = re.sub(r"[*_`]", "", norm(answer))  # ignore Markdown emphasis
+                declined = ABSTAIN_SENTENCE in cleaned or bool(REFUSAL.search(cleaned))
                 ok_neg += declined
                 print(f"\nQ (unanswerable): {q}\n   declined={'PASS' if declined else 'CHECK'} cited={cites} model={md.get('model')}")
             if done.get("event") == "error":

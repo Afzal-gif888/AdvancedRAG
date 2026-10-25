@@ -1,0 +1,12 @@
+# Durable uploads with NO new infrastructure: files are stored in the backend's own PostgreSQL database, in the same
+# transaction as the document and its job. Suitable for modest volumes (every byte counts against the database quota;
+# Neon's free plan is about 0.5 GB per project, so budget accordingly).
+#
+# This file is NOT read by Render. It is the exact change an operator makes to the `advancerag-backend` service
+# (dashboard > Environment, or by editing render.yaml in a reviewed commit). scripts/verify_production_config.py
+# validates it offline:   python scripts/verify_production_config.py --overlay infrastructure/durable-storage/backend-db.overlay.yaml
+service: advancerag-backend
+set:
+  STORAGE_BACKEND: db
+remove:
+  - ALLOW_LOCAL_STORAGE_IN_PRODUCTION

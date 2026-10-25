@@ -22,6 +22,7 @@ class State:
         self.rerank_calls = 0
         self.rerank_fail = False
         self.dimension = DIM
+        self.metric = "cosine"
         self.last_query = None
 
 
@@ -40,7 +41,7 @@ async def describe(name: str, request: Request):
     if name != "advancerag-test":
         return JSONResponse({"error": "not found"}, status_code=404)
     host = f"{request.url.scheme}://{request.url.netloc}/data"
-    return {"name": name, "dimension": state.dimension, "metric": "cosine", "host": host, "status": {"ready": True}}
+    return {"name": name, "dimension": state.dimension, "metric": state.metric, "host": host, "status": {"ready": True}}
 
 
 @pinecone.post("/data/vectors/upsert")

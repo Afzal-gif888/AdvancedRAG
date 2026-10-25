@@ -1,0 +1,138 @@
+{
+ "stamp": "2026-10-23T20:48:54",
+ "scenario": "chat",
+ "config": {
+  "scenario": "chat",
+  "users": 24,
+  "docs_per_user": 2,
+  "doc_kb": 60,
+  "pages": 3,
+  "turns": 3,
+  "llm_latency_ms": 800.0,
+  "embeddings": "local",
+  "embedding_threads": 0,
+  "rag_concurrency": 1,
+  "worker_concurrency": 1,
+  "stream_cap": 3,
+  "storage": "local",
+  "client_concurrency": 16,
+  "doc_timeout": 1800,
+  "tag": "u24"
+ },
+ "machine": {
+  "platform": "Windows-11-10.0.26300-SP0",
+  "logical_cpus": 12,
+  "python": "3.13.9"
+ },
+ "method": "isolated local stack, throw-away PostgreSQL, mock LLM with a fixed delay, rate limiting off, see the script docstring for limits",
+ "chat": {
+  "users": 24,
+  "turns_per_user": 3,
+  "turns_completed": 72,
+  "wall_seconds": 15.56,
+  "turns_per_minute": 277.69,
+  "time_to_first_token_seconds": {
+   "n": 72,
+   "p50": 2.688,
+   "p95": 6.191,
+   "max": 6.265,
+   "mean": 3.745
+  },
+  "turn_total_seconds": {
+   "n": 72,
+   "p50": 3.989,
+   "p95": 7.51,
+   "max": 7.539,
+   "mean": 5.061
+  },
+  "errors": {}
+ },
+ "total_seconds": 68.0,
+ "resources": {
+  "peak_rss_mb": {
+   "llm": 101.7,
+   "rag-core": 339.7,
+   "agent-core": 124.5,
+   "backend": 171.7
+  },
+  "mean_cpu_percent_of_one_core": {
+   "llm": 20.3,
+   "rag-core": 225.2,
+   "agent-core": 42.1,
+   "backend": 16.2
+  },
+  "queue": {
+   "max_pending": 23,
+   "max_running": 1,
+   "samples": 65,
+   "seconds_with_pending_jobs": 46,
+   "timeline_every_5s": [
+    [
+     0.0,
+     0,
+     0
+    ],
+    [
+     5.2,
+     22,
+     1
+    ],
+    [
+     10.5,
+     19,
+     1
+    ],
+    [
+     15.7,
+     17,
+     1
+    ],
+    [
+     20.9,
+     14,
+     1
+    ],
+    [
+     26.1,
+     12,
+     1
+    ],
+    [
+     31.4,
+     9,
+     1
+    ],
+    [
+     36.6,
+     7,
+     1
+    ],
+    [
+     41.8,
+     4,
+     1
+    ],
+    [
+     47.0,
+     2,
+     1
+    ],
+    [
+     52.3,
+     0,
+     0
+    ],
+    [
+     57.4,
+     0,
+     0
+    ],
+    [
+     62.6,
+     0,
+     0
+    ]
+   ]
+  }
+ }
+}

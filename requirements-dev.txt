@@ -4,8 +4,11 @@
 -e ./shared
 -r backend/requirements.txt
 -r rag-core/requirements.txt
+# fastembed must be installed WITHOUT dependencies (it caps pillow<13; see rag-core/requirements.txt):
+#   .venv/Scripts/pip install --no-deps -r rag-core/requirements-fastembed.txt rapidocr-onnxruntime
 -r agent-core/requirements.txt
 -r llm/requirements.txt
 pytest>=8
 pytest-asyncio>=0.23
 aiosqlite>=0.20
+fakeredis[lua]>=2.20   # in-process Redis (with the Lua engine) for the shared stream-cap tests

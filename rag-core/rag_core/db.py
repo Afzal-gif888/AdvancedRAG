@@ -57,6 +57,10 @@ class IndexedDocument(Base):
     page_count: Mapped[Optional[int]] = mapped_column(Integer)
     embedding_model: Mapped[str] = mapped_column(String(100))
     embedding_dimensions: Mapped[int] = mapped_column(Integer)
+    # How the text was obtained (native/OCR, per-page outcome, warnings) and with which pipeline
+    # settings it was chunked. Null for documents indexed before these columns existed.
+    extraction: Mapped[Optional[dict]] = mapped_column(JSONType)
+    pipeline_info: Mapped[Optional[dict]] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
@@ -72,6 +76,9 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer)
     page: Mapped[Optional[int]] = mapped_column(Integer)
     text: Mapped[str] = mapped_column(Text)
+    # Heading path ("Travel > Hotels") where the source has reliable headings, else null.
+    section: Mapped[Optional[str]] = mapped_column(Text)
+    extraction_method: Mapped[Optional[str]] = mapped_column(String(16))  # native | ocr
     # Only populated for VECTOR_STORE=local (dev/test).
     embedding: Mapped[Optional[list]] = mapped_column(JSONType)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
@@ -110,6 +117,7 @@ class IngestionAttempt(Base):
     error_message: Mapped[Optional[str]] = mapped_column(String(300))
     retryable: Mapped[bool] = mapped_column(default=False)
     timings: Mapped[Optional[dict]] = mapped_column(JSONType)
+    extraction: Mapped[Optional[dict]] = mapped_column(JSONType)  # ExtractionReport.to_dict() once known
     heartbeat_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     finished_at: Mapped[Optional[datetime]] = mapped_column(UTCDateTime)

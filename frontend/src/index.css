@@ -702,6 +702,9 @@ select {
 .doc-row-meta button { color: var(--text-secondary); display: inline-flex; }
 .doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 .doc-error { width: 100%; font-size: 0.75rem; color: #f87171; }
+.doc-warning { width: 100%; font-size: 0.75rem; color: #d97706; display: flex; align-items: center; gap: 4px; }
+.doc-version { font-size: 0.7rem; padding: 0 6px; border-radius: 8px; background: var(--border-color); color: var(--text-secondary); margin-left: 6px; }
+.status-superseded { opacity: 0.7; }
 
 .link-btn {
   color: var(--text-primary);

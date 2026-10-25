@@ -37,7 +37,7 @@
 | **Organise** | Conversation history, chat search, rename and delete, read-only share links that can be revoked, and a profile with settings. |
 | **Analyse CSV exactly** | CSV files also keep their full table, so questions like "total quantity for region EU" use exact calculations instead of guessing from text snippets. |
 
-Not supported: images and scanned PDFs (there is no OCR). Those fail with a clear message.
+Images and scanned PDFs need OCR, which is **off by default** (`OCR_ENABLED=false` in RAG Core). Without it they fail with a clear message. With it on, scans and PNG/JPEG are read by a self-hosted engine (RapidOCR); the backend also has to allow the image extensions in `ALLOWED_UPLOAD_EXTENSIONS`. On clean synthetic Latin-script samples the measured character error rate is about 2% (accented characters are often lost; Cyrillic, Greek and Korean were not read; a whole line can be missed without any warning), see [docs/verification/OCR_ACCURACY.md](docs/verification/OCR_ACCURACY.md). Pages that could not be read are reported on the document instead of being dropped silently. Tables in PDFs are structured only when `PDF_TABLES` is enabled in RAG Core (default `off`; `lines` for ruled tables, `auto` also tries borderless ones).
 
 ---
 
@@ -352,7 +352,13 @@ If the ports clash with something else on your machine, change `POSTGRES_PORT` /
 python -m venv .venv
 .venv/Scripts/pip install -r requirements-dev.txt        # Windows
 # .venv/bin/pip install -r requirements-dev.txt          # Linux/macOS
+# fastembed and the OCR engine are installed WITHOUT their dependencies on purpose (fastembed caps pillow<13, but the security
+# floor needs Pillow>=13; rapidocr declares opencv-python). See the note in rag-core/requirements.txt:
+.venv/Scripts/pip install --no-deps -r rag-core/requirements-fastembed.txt rapidocr-onnxruntime
 ```
+
+The container images install from `constraints/<service>.txt` (exact versions the tests ran against, regenerated with
+`python scripts/make_constraints.py`); the requirements files keep version ranges.
 
 ### 3. Configure each service
 
@@ -460,6 +466,19 @@ cd frontend && npm run test:e2e
 
 No automated test needs a real FreeLLMAPI or Pinecone key. The first run downloads the local embedding model.
 
+Beyond the test suites, these scripts produce recorded evidence (all local, isolated, nothing deployed; results land in `evaluation/results/`):
+
+```bash
+python scripts/verify_production_config.py                 # does render.yaml pass the services' production fail-fast rules? (offline, dummy secrets)
+python scripts/run_retrieval_eval.py --db <disposable pg url with "eval" in the name> --strategies recursive --experiments --rerank-local --ocr
+python scripts/eval_ocr.py                                 # OCR character error rate on labelled synthetic samples
+python scripts/perf_ingest.py --db <disposable pg url>     # ingestion size ladder
+python scripts/load_test.py --scenario chat --users 8      # concurrent ingestion / chat / mixed / OCR on an isolated stack
+python -m pip_audit --local                                # dependency advisories of the environment
+```
+
+What those runs showed, and what they did not, is in [docs/verification/](docs/verification/FEATURE_MATRIX.md).
+
 ---
 
 ## Deployment notes and limitations
@@ -484,7 +503,9 @@ Other deployment notes:
 - The backend Dockerfile migrates on start, which is only safe for a single replica.
 - Keep Agent Core, RAG Core and the LLM layer on a private network where the host allows it. They also require the internal token.
 - Build images from the repository root, for example `docker build -f backend/Dockerfile .`. `docker compose --profile app up --build` runs everything in containers (the desktop FreeLLMAPI is reached via `host.docker.internal:31415`, which works only if the app accepts non-loopback connections).
-- Images cannot be indexed yet. RAG Core has no OCR or vision step, so uploads are limited to PDF, TXT, MD, CSV and DOCX. Scanned PDFs fail with a clear message.
+- Images and scanned PDFs are indexed only when RAG Core runs with `OCR_ENABLED=true` (and the backend allowlist includes the image types); by default uploads are limited to PDF, TXT, MD, CSV and DOCX and scans fail with a clear message.
+- Uploaded files must survive restarts: set `STORAGE_BACKEND=s3` (any S3-compatible bucket) or `db` (stored in the application database, atomic with the job). `local` on an ephemeral disk (the current `render.yaml` setting) loses files on restart; such documents then fail with the explicit, non-retryable `FILE_MISSING`.
+- Verification evidence for the implementation pass (what ran, what did not) is in [docs/verification/](docs/verification/FEATURE_MATRIX.md). It is hermetic evidence only.
 - Do not change `EMBEDDING_MODEL`, `CHUNK_SIZE` or `CHUNK_OVERLAP` casually. They define the stored vectors; see "Changing a frozen value" in [docs/rag-architecture.md](docs/rag-architecture.md).
 
 ---
@@ -501,3 +522,5 @@ Other deployment notes:
 | [docs/production-freellmapi.md](docs/production-freellmapi.md) | Hosting FreeLLMAPI remotely |
 | [docs/deployment-checklist.md](docs/deployment-checklist.md) | A short list to tick before going live |
 | [docs/mobile-readiness-report.md](docs/mobile-readiness-report.md) | API readiness for a future mobile client |
+| [docs/operations/DURABLE_STORAGE.md](docs/operations/DURABLE_STORAGE.md) | Operator steps to switch uploads to durable `db`/`s3` storage safely (prepared, not applied) |
+| [docs/verification/FEATURE_MATRIX.md](docs/verification/FEATURE_MATRIX.md) | Every feature with its status, evidence and limits; links to the retrieval, OCR, performance and security write-ups |

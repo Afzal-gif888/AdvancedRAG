@@ -36,14 +36,17 @@ def extract_citations(answer: str, sources: List[RetrievedChunk]) -> List[Dict[s
             if chunk is None or n in seen:
                 continue
             seen.add(n)
-            out.append({
+            entry = {
                 "source_id": chunk.source_id,  # the [n] the model wrote, so the UI can link marker -> source
                 "document_id": str(chunk.document_id),
                 "filename": chunk.filename,
                 "page": chunk.page,
                 "chunk_id": chunk.chunk_id,
                 "snippet": chunk.text[:SNIPPET_CHARS],
-            })
+            }
+            if chunk.section:  # only documents with headings carry one; the citation shape is otherwise unchanged
+                entry["section"] = chunk.section
+            out.append(entry)
     return out
 
 
@@ -57,6 +60,41 @@ def strip_invalid_markers(answer: str, valid: Set[int]) -> str:
         return f"[{', '.join(numbers)}]" if numbers else ""
     out = _CITATION.sub(fix, answer)
     return re.sub(r"[ \t]+([.,;:!?])", r"\1", out) if out != answer else answer
+
+
+_NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _numbers(text: str) -> Set[str]:
+    return {n.replace(",", "").rstrip(".") for n in _NUMBER.findall(text)}
+
+
+def check_citation_numbers(answer: str, sources: List[RetrievedChunk]) -> Dict[str, Any]:
+    """Deterministic evidence check that needs no model: every number in a cited sentence must occur in a
+    source that sentence cites. Catches the classic failure "right citation marker, wrong figure". It checks
+    figures only (not meaning), so it complements the LLM verifier rather than replacing it.
+    Returns {"checked": sentences with a citation and a number, "mismatched": of those, "examples": [...]}."""
+    by_number = {c.source_id: c for c in sources}
+    checked, mismatched, examples = 0, 0, []
+    for sentence in _SENTENCE.split(answer):
+        marks = [int(n) for m in _CITATION.finditer(sentence) for n in re.findall(r"\d+", m.group(1))]
+        marks = [n for n in marks if n in by_number]
+        if not marks:
+            continue
+        figures = _numbers(_CITATION.sub("", sentence))
+        if not figures:
+            continue
+        checked += 1
+        supported: Set[str] = set()
+        for n in marks:
+            supported |= _numbers(by_number[n].text)
+        missing = sorted(figures - supported)
+        if missing:
+            mismatched += 1
+            if len(examples) < 3:
+                examples.append({"sources": marks, "figures_not_in_sources": missing[:5]})
+    return {"checked": checked, "mismatched": mismatched, "examples": examples}
 
 
 def verification_status(retrieved: bool, sources: List[RetrievedChunk], citations: List[Dict[str, Any]]) -> str:

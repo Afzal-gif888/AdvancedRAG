@@ -413,6 +413,11 @@ class Orchestrator:
             if final != answer:
                 yield "content.replace", {"content": final}
             citations = cit.extract_citations(final, plan.sources) if status != cit.INSUFFICIENT else []
+            if citations and plan.mode == GROUNDED:
+                check = cit.check_citation_numbers(final, plan.sources)
+                meta["citation_number_check"] = {"checked": check["checked"], "mismatched": check["mismatched"]}
+                if check["mismatched"]:
+                    log.warning("citation_numbers_not_in_cited_source", extra={"mismatched": check["mismatched"], "examples": check["examples"]})
             meta.update({
                 "model": done.get("model") if isinstance(done.get("model"), str) else None,
                 "token_usage": done.get("usage") if isinstance(done.get("usage"), dict) else None,

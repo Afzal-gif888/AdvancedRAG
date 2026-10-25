@@ -8,7 +8,31 @@ sqlalchemy[asyncio]>=2.0.30
 asyncpg>=0.29
 alembic>=1.13
 anyio>=4
-pypdf>=4.2
+pypdf>=6.21.1  # advisories fixed up to 6.21.1 (pip-audit, 2026-10-23); parses untrusted uploads
+pdfplumber>=0.11.10  # bordered/borderless table detection in text-layer PDFs (PDF_TABLES); MIT; pulls pdfminer.six + cryptography
 python-docx>=1.1
-# Local embedding model runtime (ONNX, CPU).
-fastembed>=0.4
+# Local embedding model runtime (ONNX, CPU): fastembed itself is installed from requirements-fastembed.txt with --no-deps,
+# because every fastembed release declares pillow<13 while the security floor below needs Pillow>=13 (fastembed uses Pillow
+# only for image embedding, which this service never calls; the text-embedding path is exercised by the test suite with Pillow 13).
+# Its other dependencies are therefore listed here so that nothing is missing. Remove this workaround once fastembed lifts the cap.
+huggingface-hub>=0.20,<2
+loguru>=0.7.2,<0.8
+mmh3>=4.1,<6
+numpy>=1.26
+onnxruntime>=1.17,!=1.20.0,!=1.24.0,!=1.24.1
+py-rust-stemmers>=0.1,<0.2
+requests>=2.31,<3
+tokenizers>=0.15,<1
+tqdm>=4.66,<5
+# OCR for scanned PDFs and images (optional at run time: only used when OCR_ENABLED=true).
+# pypdfium2 rasterises PDF pages; Pillow decodes images. The OCR engine (rapidocr-onnxruntime) is installed in the
+# Dockerfile with --no-deps because it declares opencv-python, which needs system GL libraries that the slim image
+# lacks; opencv-python-headless provides the same cv2 module without them.
+pypdfium2>=4.30
+Pillow>=13.0.0  # advisories fixed in 13.0.0 (pip-audit, 2026-10-23); decodes untrusted images
+opencv-python-headless>=4.8
+pyclipper>=1.3
+Shapely>=2.0
+PyYAML>=6.0
+six>=1.16
+numpy>=1.24

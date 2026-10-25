@@ -1,0 +1,3 @@
+# Install AFTER requirements.txt and WITHOUT dependencies (see the note in requirements.txt):
+#   pip install --no-deps -r rag-core/requirements-fastembed.txt
+fastembed>=0.4

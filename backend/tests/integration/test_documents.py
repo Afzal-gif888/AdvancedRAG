@@ -76,7 +76,7 @@ async def test_concurrent_workers_never_run_the_same_job_twice(client, auth, rag
     import asyncio
 
     for i in range(3):
-        await upload(client, auth, f"c{i}.txt")
+        await upload(client, auth, f"c{i}.txt", f"content {i}".encode())
     results = await asyncio.gather(*[process_one(rag=rag, storage=storage) for _ in range(6)])
     assert sum(results) == 3
     assert sorted(str(d["document_id"]) for d in rag.ingested) == sorted(set(str(d["document_id"]) for d in rag.ingested))
@@ -159,14 +159,14 @@ async def test_path_traversal_filename_is_neutralised(client, auth, tmp_path):
 async def test_document_quota(client, auth, monkeypatch):
     monkeypatch.setattr(settings, "MAX_DOCUMENTS_PER_USER", 2)
     for i in range(2):
-        assert (await upload(client, auth, f"d{i}.txt")).status_code == 201
-    r = await upload(client, auth, "d3.txt")
+        assert (await upload(client, auth, f"d{i}.txt", f"quota {i}".encode())).status_code == 201
+    r = await upload(client, auth, "d3.txt", b"quota 3")
     assert r.status_code == 409 and r.json()["error"]["code"] == "DOCUMENT_QUOTA_EXCEEDED"
 
 
 async def test_many_documents_and_listing(client, auth):
     for i in range(7):
-        assert (await upload(client, auth, f"doc{i}.md", b"# title")).status_code == 201
+        assert (await upload(client, auth, f"doc{i}.md", f"# title {i}".encode())).status_code == 201
     page = (await client.get(f"{API}/documents?limit=5", headers=auth)).json()
     assert page["total"] == 7 and len(page["items"]) == 5
     assert (await client.get(f"{API}/documents?status=uploaded", headers=auth)).json()["total"] == 7

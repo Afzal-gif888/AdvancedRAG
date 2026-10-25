@@ -16,14 +16,18 @@ crash-safe. Parsing/chunking/embedding/indexing itself is pipeline.ingest (uncha
 """
 import asyncio
 import logging
+import os
+import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from advancerag_common.observability import METRICS
 from advancerag_common.service import ServiceError
 from rag_core import db as rag_db
 from rag_core import pipeline
@@ -50,6 +54,15 @@ def _slots(limit: int) -> asyncio.Semaphore:
     return _semaphore
 
 
+def _discard_spool(path: Optional[Path]) -> None:
+    """Remove a spooled upload. Never raises: a leftover temp file must not mask the real outcome."""
+    if path is not None:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def _age(ts: Optional[datetime]) -> float:
     return (utcnow() - ts).total_seconds() if ts else float("inf")
 
@@ -72,6 +85,7 @@ def snapshot(row: IngestionAttempt, stale_after: float) -> dict:
         "error_message": "Indexing was interrupted." if stale else row.error_message,
         "retryable": True if stale else bool(row.retryable),
         "timings": row.timings or {},
+        "extraction": row.extraction,
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
         "heartbeat_age_seconds": round(_age(row.heartbeat_at), 1),
@@ -119,7 +133,7 @@ class _Control:
             await db.commit()
         return effective
 
-    async def before_commit(self, db: AsyncSession, *, chunks: int, timings: dict) -> None:
+    async def before_commit(self, db: AsyncSession, *, chunks: int, timings: dict, extraction: Optional[dict] = None) -> None:
         # Same transaction as the chunk rows: a concurrent delete (which locks/deletes this row)
         # either happens entirely before (we see no row -> cancel) or after our commit.
         row = await db.scalar(select(IngestionAttempt).where(self._owned()).with_for_update())
@@ -127,6 +141,7 @@ class _Control:
             raise pipeline.IngestionCancelled()
         row.status, row.stage, row.chunk_count = SUCCEEDED, "done", chunks
         row.timings, row.finished_at, row.heartbeat_at = dict(timings), utcnow(), utcnow()
+        row.extraction = extraction
         row.error_code = row.error_message = None
 
     async def heartbeat(self, every: float) -> None:
@@ -211,9 +226,11 @@ class IngestionManager:
             row.retryable, row.finished_at, row.vector_extent = retryable, utcnow(), 0
             await db.commit()
 
-    async def _run(self, *, row: IngestionAttempt, filename: str, mime_type: str, data: bytes) -> dict:
+    async def _run(self, *, row: IngestionAttempt, filename: str, mime_type: str, data: Optional[bytes] = None,
+                   path: Optional[Path] = None) -> dict:
         document_id, user_id, attempt_id = row.document_id, row.user_id, row.attempt_id
         control = _Control(document_id, attempt_id)
+        started_at = time.perf_counter()
         _local[document_id] = attempt_id
         beat = asyncio.create_task(control.heartbeat(self.cfg.INGEST_HEARTBEAT_SECONDS))
         try:
@@ -221,7 +238,9 @@ class IngestionManager:
                 await control.stage("parsing")
                 async with rag_db.SessionLocal() as db:
                     result = await pipeline.ingest(db, self.svc, document_id=document_id, user_id=user_id, filename=filename,
-                                                   mime_type=mime_type, data=data, control=control)
+                                                   mime_type=mime_type, data=data, path=path, control=control)
+            METRICS.inc("ingestions", outcome="succeeded", partial=str(bool((result.get("extraction") or {}).get("partial"))).lower())
+            METRICS.observe_ms("ingestion_total", round((time.perf_counter() - started_at) * 1000, 2), outcome="succeeded")
             log.info("ingestion_succeeded", extra={"document_id": str(document_id), "attempt_id": str(attempt_id),
                                                    "chunks": result["chunks"], **result.get("timings", {})})
             return result
@@ -233,6 +252,7 @@ class IngestionManager:
             await asyncio.shield(self._finish_failed(document_id, user_id, attempt_id, INTERRUPTED, "Indexing was interrupted.", True))
             raise
         except ServiceError as exc:
+            METRICS.inc("ingestions", outcome="failed", code=exc.code)
             await self._finish_failed(document_id, user_id, attempt_id, exc.code, exc.message, exc.retryable)
             raise
         except (IntegrityError, DataError):
@@ -247,26 +267,42 @@ class IngestionManager:
             beat.cancel()
             if _local.get(document_id) == attempt_id:
                 _local.pop(document_id, None)
+            _discard_spool(path)
 
     # ------------------------------------------------------------------ public API
 
-    async def start(self, *, document_id: uuid.UUID, user_id: uuid.UUID, filename: str, mime_type: str, data: bytes) -> dict:
-        """Asynchronous: claim and return immediately; the work continues in the background."""
-        row, started = await self.claim(document_id=document_id, user_id=user_id)
+    async def start(self, *, document_id: uuid.UUID, user_id: uuid.UUID, filename: str, mime_type: str, data: Optional[bytes] = None,
+                    path: Optional[Path] = None) -> dict:
+        """Asynchronous: claim and return immediately; the work continues in the background.
+        ``path`` is a spooled copy of the upload that this call takes ownership of (it is deleted when the
+        attempt ends, or at once if the document is already being indexed)."""
+        try:
+            row, started = await self.claim(document_id=document_id, user_id=user_id)
+        except BaseException:
+            _discard_spool(path)
+            raise
+        if not started:
+            _discard_spool(path)
         if started:
-            task = asyncio.create_task(self._run(row=row, filename=filename, mime_type=mime_type, data=data))
+            task = asyncio.create_task(self._run(row=row, filename=filename, mime_type=mime_type, data=data, path=path))
             _tasks[document_id] = task
             task.add_done_callback(lambda t, d=document_id: (_tasks.pop(d, None) if _tasks.get(d) is t else None,
                                                              t.cancelled() or t.exception()))
         return {**snapshot(row, self.cfg.INGEST_STALE_SECONDS), "started": started}
 
-    async def run_sync(self, *, document_id: uuid.UUID, user_id: uuid.UUID, filename: str, mime_type: str, data: bytes) -> dict:
+    async def run_sync(self, *, document_id: uuid.UUID, user_id: uuid.UUID, filename: str, mime_type: str, data: Optional[bytes] = None,
+                       path: Optional[Path] = None) -> dict:
         """Synchronous variant (POST /ingest): same lock/cleanup guarantees, waits for the result.
         A client disconnect does not cancel the ingestion (shielded)."""
-        row, started = await self.claim(document_id=document_id, user_id=user_id)
+        try:
+            row, started = await self.claim(document_id=document_id, user_id=user_id)
+        except BaseException:
+            _discard_spool(path)
+            raise
         if not started:
+            _discard_spool(path)
             raise ServiceError("INGESTION_IN_PROGRESS", "This document is already being indexed.", 409, retryable=True)
-        task = asyncio.create_task(self._run(row=row, filename=filename, mime_type=mime_type, data=data))
+        task = asyncio.create_task(self._run(row=row, filename=filename, mime_type=mime_type, data=data, path=path))
         _tasks[document_id] = task
         try:
             return await asyncio.shield(task)

@@ -101,6 +101,9 @@ class FakeRAG:
     async def start_ingestion(self, **kw):
         if self.fail:
             raise self.fail
+        content = kw.get("content")
+        if hasattr(content, "read_bytes"):  # the worker now hands over a file path; the copy may be temporary
+            kw = {**kw, "content": content.read_bytes(), "was_path": True}
         self.ingested.append(kw)
         status = dict(self.start_status) if self.start_status else {"status": "succeeded", "stage": "done", "chunks": 3, "attempt_id": str(uuid.uuid4())}
         self.attempts[kw["document_id"]] = status

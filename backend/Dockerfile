@@ -5,7 +5,8 @@ WORKDIR /srv
 
 COPY shared shared
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir ./shared -r backend/requirements.txt
+COPY constraints/backend.txt constraints/backend.txt
+RUN pip install --no-cache-dir -c constraints/backend.txt ./shared -r backend/requirements.txt
 
 COPY backend/app backend/app
 COPY backend/alembic.ini backend/alembic.ini

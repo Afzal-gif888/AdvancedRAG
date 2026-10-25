@@ -4,8 +4,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /srv
 
 COPY shared shared
-COPY rag-core/requirements.txt rag-core/requirements.txt
-RUN pip install --no-cache-dir ./shared -r rag-core/requirements.txt
+COPY constraints/rag-core.txt constraints/rag-core.txt
+COPY rag-core/requirements.txt rag-core/requirements-fastembed.txt rag-core/
+# Versions are pinned to what the tests ran against (scripts/make_constraints.py). fastembed and rapidocr are installed
+# without their dependencies on purpose: fastembed caps pillow<13 (the security floor needs 13) and rapidocr declares
+# opencv-python (needs GL libraries the slim image lacks; opencv-python-headless is in requirements.txt).
+RUN pip install --no-cache-dir -c constraints/rag-core.txt ./shared -r rag-core/requirements.txt \
+ && pip install --no-cache-dir --no-deps -c constraints/rag-core.txt -r rag-core/requirements-fastembed.txt \
+ && pip install --no-cache-dir --no-deps -c constraints/rag-core.txt "rapidocr-onnxruntime"
 
 COPY rag-core/rag_core rag-core/rag_core
 COPY rag-core/alembic.ini rag-core/alembic.ini

@@ -218,12 +218,26 @@ The old `advancerag` index (1024-d, llama-text-embed-v2) is **not compatible** a
 
 ## 5. Known limits (accepted for now)
 
-- There is no OCR. Scanned PDFs fail with `NO_EXTRACTABLE_TEXT`.
+- OCR exists (`rag_core/ocr.py`, RapidOCR on ONNX Runtime, pypdfium2 rendering) but is **off by default**. With it off, scanned PDFs fail with `NO_EXTRACTABLE_TEXT`. Measured on labelled synthetic samples (docs/verification/OCR_ACCURACY.md): mean character error rate about 2% for English text across 11 conditions; accented Latin characters are often lost; Cyrillic, Greek and Korean are not read; a line can be dropped without any warning, and the engine's confidence does not predict errors.
 - PDF layout follows pypdf's text order. Multi-column layouts may interleave.
-- Section headings stay in the chunk text but are not stored as separate metadata.
+- Section headings stay in the chunk text. With `CHUNKING_STRATEGY=structure` or `semantic` (not the default) the heading path is also stored as `section` and, if `EMBED_SECTION_CONTEXT`, prepended to the text that is embedded (the stored and returned text stays the bare chunk). The default `recursive` strategy is unchanged and is the one the frozen parameters and the baseline in section 3 describe.
+- PDF tables are structured only when `PDF_TABLES` is `lines` (ruled tables) or `auto` (also borderless, heuristic); the default `off` keeps plain text. Tables on scanned pages are inferred from OCR positions and flagged. See rag_core/pdftables.py and docs/verification/RETRIEVAL_EVALUATION.md (no retrieval benefit shown, fidelity verified by tests).
 - The model is English-only (`bge-small-en`).
 - CSVs indexed before migration 0003 have no stored table until they are reprocessed; quantitative questions about them fall back to chunk retrieval.
 - Documents indexed before 2026-10-08 keep their old chunks until they are reprocessed. As of the freeze there were none.
+
+## 5a. Additions after the freeze (2026-10-23, uncommitted; none changes a stored vector, the model, the dimension or the metric)
+
+- **Extraction**: `parsing.py` returns pages with a method (`native`/`ocr`), engine-reported confidence and an `ExtractionReport` (native/OCR/blank/unprocessed/failed pages, warnings) stored on `rag_documents.extraction` and returned by the status API. `textclean.py` (on by default, `TEXT_CLEANUP`) fixes ligatures, soft and line-end hyphens and repeated page headers/footers. Zip, pixel and OCR budgets bound hostile input.
+- **Chunking strategies** behind `CHUNKING_STRATEGY` (`recursive` default | `structure` | `semantic`). The recorded comparison is in `docs/verification/RETRIEVAL_EVALUATION.md`; it does not justify changing the default.
+- **Streaming**: uploads are spooled to a temp file and parsed from the path; the backend streams the stored object to RAG Core.
+- **Integrity**: documents record the embedding model and dimension; retrieval refuses mismatches (`EMBEDDING_MODEL_MISMATCH`, 409), `/ready` reports them, the Pinecone dimension and metric are checked, and `POST /api/v1/rag/documents/{id}/reindex?user_id=` re-embeds from stored chunk rows (same deterministic vector ids, never deletes).
+- **Observability**: ingestion/OCR/degraded-retrieval counters and an ingestion-duration histogram; W3C `traceparent` propagation (see `shared/advancerag_common/observability.py`).
+- **Keyword ranking (behaviour change, not a stored value):** `KEYWORD_RANKING` now defaults to `idf`: the PostgreSQL OR candidates are re-scored with BM25 using the user's own chunk statistics. The original `ts_rank_cd` ignores term rarity; on evaluation dataset v1.2 it found none of the exact-identifier chunks in its top 20 and made the hybrid worse than dense search alone (Hit@1 0.737 -> 0.598). With the new default plus a cross-encoder, Hit@6 0.958 -> 0.992 and MRR 0.908 -> 0.939 on that dataset (all of the gain on identifier lookups; nothing got worse elsewhere). Roll back with `KEYWORD_RANKING=cover_density`. Evidence and limits: docs/verification/RETRIEVAL_EVALUATION.md. Cost: four database round trips per query instead of one. `RRF_KEYWORD_WEIGHT` (default 1.0) is available but was not needed.
+- **Audit and repair:** `GET /api/v1/rag/documents/{id}/audit?user_id=` (read-only) compares chunk rows, chunk indexes and the vectors that can actually be read back, and the recorded embedding model; `POST .../reindex` re-embeds from stored chunks. Missing chunk rows cannot be rebuilt from vectors (Pinecone holds no text); the audit says to reprocess the original file.
+- **Parser budgets:** `PDF_PARSE_TIMEOUT_SECONDS` (native extraction; checked between pages, so one pathological page can still run long), `PDF_TABLE_TIMEOUT_SECONDS`, and the OCR page/pixel/time limits.
+- **Tables in PDFs:** `PDF_TABLES=off|lines|auto` (default `off`), implemented with pdfplumber; see section 5.
+- Migrations: RAG Core `0004_extraction_metadata`; backend `0005_document_durability` (additive and backward compatible; rollback with `alembic downgrade`).
 
 ## 6. Changing a frozen value
 

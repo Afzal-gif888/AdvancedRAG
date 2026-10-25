@@ -6,6 +6,7 @@ exporter can be dropped in behind it later without touching call sites.
 import json
 import logging
 import re
+import secrets
 import sys
 import threading
 import time
@@ -16,6 +17,12 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+# W3C Trace Context (https://www.w3.org/TR/trace-context/): one trace id follows a user action through every
+# service. No tracing backend is required: the id is in every log line and every internal request header, so
+# `grep trace_id=<id>` across the services' logs reconstructs the whole path. A collector can be added later
+# without touching call sites.
+trace_id_var: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
+_TRACEPARENT = re.compile(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$")
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 
 # Values that must never reach logs, whatever the call site passes.
@@ -38,6 +45,28 @@ def get_request_id() -> Optional[str]:
     return request_id_var.get()
 
 
+def get_trace_id() -> Optional[str]:
+    return trace_id_var.get()
+
+
+def new_trace_id() -> str:
+    return secrets.token_hex(16)
+
+
+def parse_traceparent(value: Optional[str]) -> Optional[str]:
+    """The trace id of a well-formed `traceparent` header, else None (all-zero ids are invalid per the spec)."""
+    m = _TRACEPARENT.match((value or "").strip().lower())
+    if not m or set(m.group(1)) == {"0"} or set(m.group(2)) == {"0"}:
+        return None
+    return m.group(1)
+
+
+def traceparent_header() -> Optional[str]:
+    """`traceparent` for an outgoing request: the current trace, a fresh span id."""
+    trace = trace_id_var.get()
+    return f"00-{trace}-{secrets.token_hex(8)}-01" if trace else None
+
+
 _RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime"}
 
 
@@ -54,6 +83,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
             "request_id": get_request_id(),
+            "trace_id": trace_id_var.get(),
         }
         for key, value in record.__dict__.items():
             if key not in _RESERVED and key not in payload and not key.startswith("_"):
@@ -102,6 +132,7 @@ class Metrics:
     def __init__(self):
         self._lock = threading.Lock()
         self._counters: Dict[Tuple[str, Tuple], float] = {}
+        self._gauges: Dict[Tuple[str, Tuple], float] = {}
         self._hist: Dict[Tuple[str, Tuple], list] = {}
 
     @staticmethod
@@ -112,6 +143,10 @@ class Metrics:
         with self._lock:
             k = self._key(name, labels)
             self._counters[k] = self._counters.get(k, 0) + value
+
+    def set_gauge(self, name: str, value: float, **labels: str) -> None:
+        with self._lock:
+            self._gauges[self._key(name, labels)] = value
 
     def observe_ms(self, name: str, ms: float, **labels: str) -> None:
         with self._lock:
@@ -133,6 +168,8 @@ class Metrics:
         with self._lock:
             for (name, labels), value in sorted(self._counters.items()):
                 lines.append(f"{name}_total{fmt(labels)} {value}")
+            for (name, labels), value in sorted(self._gauges.items()):
+                lines.append(f"{name}{fmt(labels)} {value}")
             for (name, labels), h in sorted(self._hist.items()):
                 for i, b in enumerate(_BUCKETS):
                     le = 'le="%s"' % b
@@ -180,6 +217,7 @@ class RequestContextMiddleware:
         incoming = dict(scope["headers"]).get(b"x-request-id", b"").decode("latin-1")
         request_id = incoming if _VALID_REQUEST_ID.match(incoming) else uuid.uuid4().hex
         token = request_id_var.set(request_id)
+        trace_token = trace_id_var.set(parse_traceparent(dict(scope["headers"]).get(b"traceparent", b"").decode("latin-1")) or new_trace_id())
         started = time.perf_counter()
         status = {"code": 500}
 
@@ -197,3 +235,4 @@ class RequestContextMiddleware:
             METRICS.observe_ms("http_request", ms, route=path, method=scope["method"], status=str(status["code"]))
             self.log.info("request", extra={"method": scope["method"], "route": path, "status": status["code"], "duration_ms": ms})
             request_id_var.reset(token)
+            trace_id_var.reset(trace_token)

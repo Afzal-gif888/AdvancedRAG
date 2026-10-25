@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, KeyboardEvent, ReactNode } from 'react';
 import {
-  Copy, Edit2, FileText, LogOut, Menu, MoreHorizontal, Paperclip, RotateCcw,
+  AlertTriangle, Copy, Edit2, FileText, LogOut, Menu, MoreHorizontal, Paperclip, Replace, RotateCcw,
   Search, Send, Settings, Share, Square, Trash2, UploadCloud, User as UserIcon, X,
 } from 'lucide-react';
 import { api, ApiError, errorMessage } from '../api';
@@ -9,7 +9,7 @@ import { useAppStore } from '../store';
 import type { DocumentInfo, Message, StreamEvent, Theme } from '../types';
 import {
   ACCEPTED_FILE_LABEL, ACCEPTED_FILE_TYPES, capitalize, dangerButtonStyle, displayName, ERROR_TEXT, formatBytes, MAX_UPLOAD_BYTES,
-  formatRelative, initial, inputStyle, primaryButtonStyle,
+  extractionNotice, formatRelative, initial, inputStyle, primaryButtonStyle,
 } from './helpers';
 import AssistantAnswer from './AssistantAnswer';
 import { ConfirmDialog, FormMessage, Modal, StatusChip } from './ui';
@@ -305,6 +305,7 @@ export default function MainApp() {
             setPendingUploads((p) => p.map((x) => (x.tempId === tempId ? { ...x, progress } : x))),
           );
           store.upsertDocument(doc);
+          if (doc.duplicate) errors.push(`${file.name}: already in your Knowledge Base as "${doc.filename}" (nothing was re-processed).`);
         } catch (e) {
           errors.push(`${file.name}: ${errorMessage(e)}`);
         } finally {
@@ -355,6 +356,33 @@ export default function MainApp() {
     });
   };
 
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const replaceTarget = useRef<DocumentInfo | null>(null);
+  const startReplace = (doc: DocumentInfo) => {
+    replaceTarget.current = doc;
+    replaceInput.current?.click();
+  };
+  const onReplaceFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const target = replaceTarget.current;
+    e.target.value = '';
+    if (!file || !target) return;
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setBanner(`${file.name}: Files must be at most ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.`);
+      return;
+    }
+    try {
+      const next = await api.replaceDocument(target.id, file);
+      if (next.duplicate) setBanner(`${file.name}: identical to the current version; nothing changed.`);
+      else {
+        setBanner(`New version of "${target.filename}" is being indexed. The current version stays searchable until it is ready.`);
+        store.upsertDocument(next);
+      }
+    } catch (err) {
+      setBanner(errorMessage(err));
+    }
+  };
+
   const reprocessDoc = async (doc: DocumentInfo) => {
     try {
       store.upsertDocument(await api.reprocessDocument(doc.id));
@@ -403,6 +431,7 @@ export default function MainApp() {
                   <h4 className="panel-heading">Your Knowledge Base</h4>
                   <p className="panel-note">Ready documents are searched automatically in every chat, new or old. Nothing to attach.</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input name="replacement" aria-label="Choose the new version of the document" type="file" accept={ACCEPTED_FILE_TYPES} ref={replaceInput} style={{ display: 'none' }} onChange={onReplaceFile} data-testid="kb-replace" />
                     {pendingUploads.map((p) => (
                       <div key={p.tempId} className="doc-row">
                         <div className="doc-row-main"><FileText size={16} color="var(--text-secondary)" /><span className="doc-name">{p.name}</span></div>
@@ -415,6 +444,7 @@ export default function MainApp() {
                           <div className="doc-row-main">
                             <FileText size={16} color="var(--text-secondary)" />
                             <span className="doc-name" title={doc.filename}>{doc.filename}</span>
+                            {(doc.version ?? 1) > 1 && <span className="doc-version" title="Version of this document">v{doc.version}</span>}
                           </div>
                           <div className="doc-row-meta">
                             <span>{formatBytes(doc.size_bytes)}</span>
@@ -422,9 +452,17 @@ export default function MainApp() {
                             {doc.status === 'failed' && (
                               <button onClick={() => reprocessDoc(doc)} title="Retry processing"><RotateCcw size={14} /></button>
                             )}
+                            {doc.status === 'ready' && (
+                              <button onClick={() => startReplace(doc)} title="Upload a new version" aria-label={`Upload a new version of ${doc.filename}`}><Replace size={14} /></button>
+                            )}
                             <button onClick={() => deleteDoc(doc)} title="Delete"><Trash2 size={14} /></button>
                           </div>
                           {doc.processing_error && <div className="doc-error">{doc.processing_error}</div>}
+                          {extractionNotice(doc.extraction) && (
+                            <div className="doc-warning" role="status" title={(doc.extraction?.warnings ?? []).map((w) => w.message).join('\n')}>
+                              <AlertTriangle size={12} /> {extractionNotice(doc.extraction)}
+                            </div>
+                          )}
                         </div>
                       );
                     })}

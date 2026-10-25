@@ -54,17 +54,69 @@ class Settings(BaseSettings):
     PINECONE_UPSERT_CONCURRENCY: int = Field(default=5, ge=1, le=8)
     PINECONE_MAX_ATTEMPTS: int = Field(default=3, ge=1, le=5)
 
+    # The metric the Pinecone index must use. Verified against the index description (the code used to
+    # check only the dimension).
+    PINECONE_METRIC: str = "cosine"
+
     RERANKER: Literal["pinecone", "none"] = "pinecone"
     RERANK_MODEL: str = "bge-reranker-v2-m3"
 
     CHUNK_SIZE: int = Field(default=1200, ge=200, le=8000)
     CHUNK_OVERLAP: int = Field(default=200, ge=0, le=2000)
     MAX_FILE_BYTES: int = 30 * 1024 * 1024
+    # Measured, not assumed: embedding dominates ingestion time (docs/rag-architecture.md "Ingestion
+    # speed"), so raise this only after measuring memory, embedding throughput and Pinecone writes
+    # on the target hardware (docs/verification/PERFORMANCE.md).
     MAX_CHUNKS_PER_DOCUMENT: int = 5000
+
+    # ---- chunking strategy. "recursive" is the frozen baseline; the others are opt-in and only
+    # affect documents ingested afterwards (a re-ingest is needed to apply them to old documents).
+    CHUNKING_STRATEGY: Literal["recursive", "structure", "semantic"] = "recursive"
+    # Embed "<section path>\n<chunk text>" instead of the bare chunk text (structure/semantic only).
+    EMBED_SECTION_CONTEXT: bool = True
+    SEMANTIC_BREAKPOINT_PERCENTILE: int = Field(default=90, ge=50, le=99)
+    SEMANTIC_MIN_CHUNK_CHARS: int = Field(default=300, ge=50, le=4000)
+    # Above this many sentences semantic chunking is skipped (recorded in the extraction report) and
+    # the structure/recursive chunker is used, so a huge document cannot trigger a huge embedding bill.
+    SEMANTIC_MAX_SENTENCES: int = Field(default=4000, ge=10, le=100_000)
+
+    # ---- text extraction hygiene
+    TEXT_CLEANUP: bool = True  # ligatures, soft hyphens, line-end hyphenation, repeated headers/footers
+    UNWRAP_LINES: bool = True  # join hard-wrapped lines of PDF/OCR paragraphs (never lists, tables, code)
+    MAX_PDF_PAGES: int = Field(default=2000, ge=1, le=100_000)
+    # Table structure in text-layer PDFs and OCR output (rag_core/pdftables.py). off = unchanged plain text (the frozen
+    # behaviour); lines = bordered tables only (cell boundaries come from the ruling lines); auto = bordered, then
+    # borderless tables inferred from text alignment (heuristic). Never changes embeddings, only the text that is chunked.
+    PDF_PARSE_TIMEOUT_SECONDS: float = Field(default=900.0, gt=0, le=14_400)  # native text extraction, whole document; later pages are reported unread
+    PDF_TABLES: Literal["off", "lines", "auto"] = "off"
+    PDF_TABLE_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0, le=1800)  # per document; pages after it keep plain text
+    # DOCX/ZIP bomb guard: refuse a package whose members expand beyond these limits.
+    MAX_ZIP_UNCOMPRESSED_BYTES: int = 300 * 1024 * 1024
+    MAX_ZIP_RATIO: int = Field(default=200, ge=2, le=100_000)
+
+    # ---- OCR (scanned PDFs and PNG/JPEG images). Off by default: it needs CPU and RAM that small
+    # instances (Render free: 0.1 CPU / 512 MB) do not have. Enable per deployment after measuring.
+    OCR_ENABLED: bool = False
+    OCR_RENDER_DPI: int = Field(default=150, ge=72, le=300)
+    OCR_MAX_PAGES_PER_DOCUMENT: int = Field(default=200, ge=1, le=5000)
+    OCR_MAX_PIXELS: int = Field(default=12_000_000, ge=100_000, le=200_000_000)  # per rendered page
+    OCR_PAGE_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0, le=1800)
+    OCR_DOCUMENT_TIMEOUT_SECONDS: float = Field(default=1800.0, gt=0, le=14_400)
+    OCR_MIN_NATIVE_CHARS: int = Field(default=20, ge=1, le=1000)  # fewer native characters => OCR candidate
+    OCR_MIN_CONFIDENCE: float = Field(default=0.5, ge=0, le=1)  # engine-reported; below => a warning
+    IMAGE_MAX_PIXELS: int = Field(default=40_000_000, ge=100_000, le=500_000_000)
+    # Where uploads are spooled while they are being processed (default: the system temp directory).
+    SPOOL_DIR: Optional[str] = None
 
     RETRIEVAL_CANDIDATES: int = Field(default=20, ge=1, le=100)
     RETRIEVAL_TOP_K: int = Field(default=6, ge=1, le=50)
     RRF_K: int = 60
+    # How the PostgreSQL keyword candidates are ranked. idf (default since the 2026-10-23 evaluation): the OR candidates re-scored with
+    # BM25 using statistics of the user's own chunks. cover_density: the original ts_rank_cd, which ignores term rarity (on evaluation
+    # dataset v1.2 it found NONE of the exact-identifier chunks in its top 20 and made the hybrid worse than dense search alone;
+    # docs/verification/RETRIEVAL_EVALUATION.md). Roll back with KEYWORD_RANKING=cover_density. tf: ts_rank. and_then_or: AND first.
+    KEYWORD_RANKING: Literal["cover_density", "idf", "tf", "and_then_or"] = "idf"
+    RRF_KEYWORD_WEIGHT: float = Field(default=1.0, gt=0, le=10)  # weight of the keyword ranking in fusion; 1.0 = plain RRF
     MAX_CONTEXT_CHARS: int = 12_000
 
     HTTP_TIMEOUT_SECONDS: float = 30.0
@@ -85,7 +137,7 @@ class Settings(BaseSettings):
     TABLE_MAX_COLUMNS: int = Field(default=100, ge=2, le=1000)
 
     @field_validator("INTERNAL_SERVICE_TOKEN", "PINECONE_API_KEY", "PINECONE_INDEX", "PINECONE_INDEX_HOST",
-                     "EMBEDDING_DIMENSIONS", "EMBEDDING_THREADS", mode="before")
+                     "EMBEDDING_DIMENSIONS", "EMBEDDING_THREADS", "SPOOL_DIR", mode="before")
     @classmethod
     def _blank_to_none(cls, v):
         return None if isinstance(v, str) and not v.strip() else v

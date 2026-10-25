@@ -12,8 +12,11 @@
 import asyncio
 import json
 import logging
+import os
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import List, Literal, Optional, Union
 
 import anyio
@@ -21,7 +24,7 @@ import anyio
 from fastapi import Depends, FastAPI, File, Form, Query, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from advancerag_common.observability import RequestContextMiddleware, configure_logging
@@ -102,13 +105,37 @@ def _metadata(raw: str) -> IngestMetadata:
         raise ServiceError("INVALID_METADATA", "Invalid ingest metadata.", 422)
 
 
+async def _spool(file: UploadFile) -> Path:
+    """Copy the upload to a temporary file in 1 MiB steps (memory stays flat whatever the size) and refuse
+    anything above MAX_FILE_BYTES while copying. The caller owns the returned path."""
+    fd, name = tempfile.mkstemp(prefix="ingest-", suffix=".part", dir=settings.SPOOL_DIR or None)
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > settings.MAX_FILE_BYTES:
+                    raise ServiceError("DOCUMENT_TOO_LARGE", "The document is too large to index.", 413)
+                out.write(chunk)
+    except BaseException:
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+        raise
+    return Path(name)
+
+
 @app.post("/api/v1/rag/ingestions", status_code=202, dependencies=[auth])
 async def start_ingestion(metadata: str = Form(...), file: UploadFile = File(...), svc: pipeline.Services = Depends(get_services)):
     """Starts (or joins) the document's ingestion and returns at once; poll GET /ingestions/{id}."""
     meta = _metadata(metadata)
-    data = await file.read(settings.MAX_FILE_BYTES + 1)
+    path = await _spool(file)
     return await ingestion.IngestionManager(svc).start(document_id=meta.document_id, user_id=meta.user_id,
-                                                        filename=meta.filename, mime_type=meta.mime_type, data=data)
+                                                        filename=meta.filename, mime_type=meta.mime_type, path=path)
 
 
 @app.get("/api/v1/rag/ingestions/{document_id}", dependencies=[auth])
@@ -122,9 +149,9 @@ async def ingestion_status(document_id: uuid.UUID, user_id: uuid.UUID = Query(..
 @app.post("/api/v1/rag/ingest", dependencies=[auth])
 async def ingest(metadata: str = Form(...), file: UploadFile = File(...), svc: pipeline.Services = Depends(get_services)):
     meta = _metadata(metadata)
-    data = await file.read(settings.MAX_FILE_BYTES + 1)
+    path = await _spool(file)
     result = await ingestion.IngestionManager(svc).run_sync(document_id=meta.document_id, user_id=meta.user_id,
-                                                            filename=meta.filename, mime_type=meta.mime_type, data=data)
+                                                            filename=meta.filename, mime_type=meta.mime_type, path=path)
     return {k: v for k, v in result.items() if k != "timings"}
 
 
@@ -134,6 +161,20 @@ async def delete_document(document_id: uuid.UUID, user_id: uuid.UUID = Query(...
     if not await pipeline.delete_document(db, svc, document_id=document_id, user_id=user_id):
         raise ServiceError("NOT_FOUND", "Document not indexed.", 404)
     return Response(status_code=204)
+
+
+@app.get("/api/v1/rag/documents/{document_id}/audit", dependencies=[auth])
+async def audit_document(document_id: uuid.UUID, user_id: uuid.UUID = Query(...), db: AsyncSession = Depends(rag_db.get_db),
+                         svc: pipeline.Services = Depends(get_services)):
+    """Read-only: do the chunk rows and the vectors of this document agree (see pipeline.audit_document)?"""
+    return await pipeline.audit_document(db, svc, document_id=document_id, user_id=user_id)
+
+
+@app.post("/api/v1/rag/documents/{document_id}/reindex", dependencies=[auth])
+async def reindex_document(document_id: uuid.UUID, user_id: uuid.UUID = Query(...), db: AsyncSession = Depends(rag_db.get_db),
+                           svc: pipeline.Services = Depends(get_services)):
+    """Re-embed a document from its stored chunks (see pipeline.reindex_document)."""
+    return await pipeline.reindex_document(db, svc, document_id=document_id, user_id=user_id)
 
 
 @app.post("/api/v1/rag/retrieve", dependencies=[auth])
@@ -224,6 +265,15 @@ async def ready(svc: pipeline.Services = Depends(get_services)):
         checks["database"] = False
     vec_ok, vec_detail = await svc.vectors.health()
     checks["vector_store"] = vec_ok
+    integrity = {"model_mismatch_documents": None}
+    try:
+        async with rag_db.SessionLocal() as s:
+            integrity["model_mismatch_documents"] = int(await s.scalar(
+                select(func.count()).select_from(IndexedDocument).where(
+                    (IndexedDocument.embedding_model != svc.embeddings.model) | (IndexedDocument.embedding_dimensions != svc.embeddings.dimensions))
+            ) or 0)
+    except Exception:
+        pass
     checks["embedding_model_loaded"] = svc.embeddings.is_ready()
     ok = all(checks.values())
     return JSONResponse(status_code=200 if ok else 503, content={
@@ -231,4 +281,7 @@ async def ready(svc: pipeline.Services = Depends(get_services)):
         "checks": checks,
         "embedding": {"model": svc.embeddings.model, "dimensions": svc.embeddings.dimensions},
         "detail": vec_detail,
+        # Informational: documents indexed with another model are not searched (they need a re-index);
+        # that does not make the service itself unready.
+        "index_integrity": integrity,
     })

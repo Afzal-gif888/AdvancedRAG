@@ -1,0 +1,103 @@
+{
+ "stamp": "2026-10-23T20:48:10",
+ "scenario": "chat",
+ "config": {
+  "scenario": "chat",
+  "users": 8,
+  "docs_per_user": 2,
+  "doc_kb": 60,
+  "pages": 3,
+  "turns": 3,
+  "llm_latency_ms": 800.0,
+  "embeddings": "local",
+  "embedding_threads": 0,
+  "rag_concurrency": 1,
+  "worker_concurrency": 1,
+  "stream_cap": 3,
+  "storage": "local",
+  "client_concurrency": 16,
+  "doc_timeout": 1800,
+  "tag": "u8"
+ },
+ "machine": {
+  "platform": "Windows-11-10.0.26300-SP0",
+  "logical_cpus": 12,
+  "python": "3.13.9"
+ },
+ "method": "isolated local stack, throw-away PostgreSQL, mock LLM with a fixed delay, rate limiting off, see the script docstring for limits",
+ "chat": {
+  "users": 8,
+  "turns_per_user": 3,
+  "turns_completed": 24,
+  "wall_seconds": 12.61,
+  "turns_per_minute": 114.23,
+  "time_to_first_token_seconds": {
+   "n": 24,
+   "p50": 2.51,
+   "p95": 3.599,
+   "max": 3.604,
+   "mean": 2.83
+  },
+  "turn_total_seconds": {
+   "n": 24,
+   "p50": 3.822,
+   "p95": 4.876,
+   "max": 4.932,
+   "mean": 4.137
+  },
+  "errors": {}
+ },
+ "total_seconds": 30.72,
+ "resources": {
+  "peak_rss_mb": {
+   "llm": 78.4,
+   "rag-core": 333.1,
+   "agent-core": 87.1,
+   "backend": 114.4
+  },
+  "mean_cpu_percent_of_one_core": {
+   "llm": 13.1,
+   "rag-core": 175.5,
+   "agent-core": 24.7,
+   "backend": 9.0
+  },
+  "queue": {
+   "max_pending": 7,
+   "max_running": 1,
+   "samples": 30,
+   "seconds_with_pending_jobs": 14,
+   "timeline_every_5s": [
+    [
+     0.0,
+     0,
+     0
+    ],
+    [
+     5.2,
+     5,
+     1
+    ],
+    [
+     10.4,
+     3,
+     1
+    ],
+    [
+     15.6,
+     0,
+     1
+    ],
+    [
+     20.8,
+     0,
+     0
+    ],
+    [
+     26.0,
+     0,
+     0
+    ]
+   ]
+  }
+ }
+}

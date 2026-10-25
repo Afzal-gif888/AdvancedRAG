@@ -234,3 +234,36 @@ def test_client_ip_uses_trusted_hops_from_the_right(monkeypatch, hops, legacy, x
     monkeypatch.setattr(rate_limit.settings, "TRUST_PROXY_HEADERS", legacy)
     scope = {"type": "http", "headers": [(b"x-forwarded-for", xff.encode())], "client": (peer, 1234)}
     assert rate_limit.client_ip(Request(scope)) == expected
+
+
+@pytest.mark.parametrize("key", [
+    "../outside", "../../outside", "documents/../../outside", "/etc/passwd", "C:\Windows\win.ini", "documents/..",
+    "../storage-evil/file", "a/b/../../../c", "",
+])
+def test_local_storage_rejects_every_key_that_leaves_the_root(tmp_path, key):
+    root = tmp_path / "storage"
+    (tmp_path / "storage-evil").mkdir()                      # a sibling whose name starts with the root's name
+    store = LocalStorage(str(root))
+    with pytest.raises(ValueError):
+        store._path(key)
+
+
+def test_local_storage_accepts_ordinary_nested_keys(tmp_path):
+    store = LocalStorage(str(tmp_path / "storage"))
+    key = make_storage_key(uuid.uuid4(), uuid.uuid4())
+    assert store._path(key) == store.root / key
+
+
+async def test_concurrent_first_uploads_into_a_fresh_root_all_succeed(tmp_path):
+    """Regression: under concurrent first uploads a valid key was rejected on Windows (resolve() returned a \\?\ path)."""
+    import asyncio
+
+    store = LocalStorage(str(tmp_path / "fresh-root"))
+
+    async def put_one():
+        key = make_storage_key(uuid.uuid4(), uuid.uuid4())
+        await store.put(key, io.BytesIO(b"x" * 2000))
+        return await store.read_bytes(key)
+
+    results = await asyncio.gather(*[put_one() for _ in range(40)])
+    assert all(r == b"x" * 2000 for r in results)

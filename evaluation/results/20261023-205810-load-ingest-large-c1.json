@@ -1,0 +1,168 @@
+{
+ "stamp": "2026-10-23T20:56:30",
+ "scenario": "ingest",
+ "config": {
+  "scenario": "ingest",
+  "users": 4,
+  "docs_per_user": 3,
+  "doc_kb": 200,
+  "pages": 3,
+  "turns": 3,
+  "llm_latency_ms": 800.0,
+  "embeddings": "local",
+  "embedding_threads": 0,
+  "rag_concurrency": 1,
+  "worker_concurrency": 1,
+  "stream_cap": 3,
+  "storage": "local",
+  "client_concurrency": 16,
+  "doc_timeout": 1800,
+  "tag": "large-c1"
+ },
+ "machine": {
+  "platform": "Windows-11-10.0.26300-SP0",
+  "logical_cpus": 12,
+  "python": "3.13.9"
+ },
+ "method": "isolated local stack, throw-away PostgreSQL, mock LLM with a fixed delay, rate limiting off, see the script docstring for limits",
+ "ingestion": {
+  "documents_submitted": 12,
+  "documents_ready": 12,
+  "wall_seconds": 98.51,
+  "docs_per_minute": 7.31,
+  "approx_chunks_per_second": 27.65,
+  "upload_seconds": {
+   "n": 12,
+   "p50": 0.288,
+   "p95": 0.307,
+   "max": 0.33,
+   "mean": 0.277
+  },
+  "upload_to_ready_seconds": {
+   "n": 12,
+   "p50": 57.526,
+   "p95": 90.108,
+   "max": 98.447,
+   "mean": 53.717
+  },
+  "errors": {}
+ },
+ "total_seconds": 99.02,
+ "resources": {
+  "peak_rss_mb": {
+   "llm": 58.7,
+   "rag-core": 359.2,
+   "agent-core": 63.9,
+   "backend": 171.6
+  },
+  "mean_cpu_percent_of_one_core": {
+   "llm": 0.1,
+   "rag-core": 765.9,
+   "agent-core": 0.1,
+   "backend": 7.7
+  },
+  "queue": {
+   "max_pending": 11,
+   "max_running": 1,
+   "samples": 95,
+   "seconds_with_pending_jobs": 86,
+   "timeline_every_5s": [
+    [
+     0.0,
+     0,
+     0
+    ],
+    [
+     5.3,
+     11,
+     1
+    ],
+    [
+     10.5,
+     10,
+     1
+    ],
+    [
+     15.7,
+     10,
+     1
+    ],
+    [
+     20.9,
+     9,
+     1
+    ],
+    [
+     26.1,
+     8,
+     1
+    ],
+    [
+     31.4,
+     8,
+     1
+    ],
+    [
+     36.6,
+     7,
+     1
+    ],
+    [
+     41.8,
+     6,
+     1
+    ],
+    [
+     47.0,
+     6,
+     1
+    ],
+    [
+     52.3,
+     5,
+     1
+    ],
+    [
+     57.5,
+     5,
+     1
+    ],
+    [
+     62.7,
+     4,
+     1
+    ],
+    [
+     67.9,
+     3,
+     1
+    ],
+    [
+     73.2,
+     3,
+     1
+    ],
+    [
+     78.4,
+     2,
+     1
+    ],
+    [
+     83.6,
+     1,
+     1
+    ],
+    [
+     88.8,
+     1,
+     1
+    ],
+    [
+     94.1,
+     0,
+     1
+    ]
+   ]
+  }
+ }
+}

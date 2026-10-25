@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timezone 
 
 # pyrefly: ignore [missing-import]
-from advancerag_common.observability import redact 
+from advancerag_common.observability import redact, trace_id_var
 
 from app.core.config import settings
 from app.core.context import get_request_id
@@ -22,6 +22,7 @@ class JsonFormatter(logging.Formatter):
 
             "msg": record.getMessage(),
             "request_id": getattr(record, "request_id", None) or get_request_id(),
+            "trace_id": trace_id_var.get(),
         }
         # Structured fields passed through `extra=`.
         for key, value in record.__dict__.items():
