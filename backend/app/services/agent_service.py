@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from advancerag_common import wake
 
@@ -203,7 +203,7 @@ async def stream_turn(agent: AgentCoreClient, turn: PreparedTurn) -> AsyncIterat
     if error_code:
         # Partial output (if any) is kept but the message is marked failed + retryable.
         saved = await _persist(assistant_id, status=msg_status.FAILED, content=content, error_code=error_code)
-        payload = {"code": error_code, "message": SAFE_ERROR_MESSAGES.get(error_code, SAFE_ERROR_MESSAGES["GENERATION_FAILED"])}
+        payload: Dict[str, Any] = {"code": error_code, "message": SAFE_ERROR_MESSAGES.get(error_code, SAFE_ERROR_MESSAGES["GENERATION_FAILED"])}
         if saved is not None:
             payload["assistant_message"] = message_service.to_response(saved).model_dump(mode="json")
         yield sse("error", payload)

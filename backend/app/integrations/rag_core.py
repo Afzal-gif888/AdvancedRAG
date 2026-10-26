@@ -10,7 +10,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, cast
 
 import httpx
 
@@ -76,7 +76,7 @@ class RAGCoreClient:
                 response = await self._client().post(
                     "/api/v1/rag/ingestions",
                     data={"metadata": json.dumps(metadata)},
-                    files={"file": (filename, handle if handle is not None else content, mime_type)},
+                    files=cast(Any, {"file": (filename, handle if handle is not None else content, mime_type)}),
                     headers=outbound_headers(),
                     timeout=self._timeout(),
                 )

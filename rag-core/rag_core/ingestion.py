@@ -21,7 +21,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import DataError, IntegrityError
@@ -31,7 +31,7 @@ from advancerag_common.observability import METRICS
 from advancerag_common.service import ServiceError
 from rag_core import db as rag_db
 from rag_core import pipeline
-from rag_core.db import IndexedDocument, IngestionAttempt, utcnow
+from rag_core.db import IndexedDocument, IngestionAttempt, rowcount, utcnow
 
 log = logging.getLogger("advancerag.rag.ingestion")
 
@@ -154,7 +154,7 @@ class _Control:
                         .values(heartbeat_at=utcnow(), stage=self.stage_name[:40])
                     )
                     await db.commit()
-                if result.rowcount == 0:
+                if rowcount(result) == 0:
                     self.cancelled = True  # deleted, superseded or finished
                     return
             except Exception:
@@ -194,7 +194,7 @@ class IngestionManager:
                             .where(IngestionAttempt.document_id == document_id, IngestionAttempt.attempt_id == row.attempt_id)
                             .values(**fields)
                         )
-                        if result.rowcount != 1:
+                        if rowcount(result) != 1:
                             await db.rollback()
                             continue
                         await db.commit()
@@ -203,7 +203,7 @@ class IngestionManager:
                     continue
                 if row is not None and row.status == RUNNING:
                     log.warning("ingestion_stale_attempt_taken_over", extra={"document_id": str(document_id), "previous_attempt": str(row.attempt_id)})
-                return await db.get(IngestionAttempt, document_id, populate_existing=True), True
+                return cast(IngestionAttempt, await db.get(IngestionAttempt, document_id, populate_existing=True)), True
         raise ServiceError("INGESTION_BUSY", "The document is being claimed by another request.", 409, retryable=True)
 
     # ------------------------------------------------------------------ run

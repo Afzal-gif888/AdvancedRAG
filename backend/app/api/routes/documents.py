@@ -29,7 +29,7 @@ async def list_documents(
     status_filter: Optional[Literal["uploaded", "processing", "ready", "failed"]] = Query(None, alias="status"),
 ):
     items, total = await document_service.list_for_user(db, user.id, limit, offset, status_filter)
-    return Page(items=items, total=total, limit=limit, offset=offset)
+    return Page(items=list(items), total=total, limit=limit, offset=offset)
 
 
 @router.post(

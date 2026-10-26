@@ -171,7 +171,7 @@ class Worker:
         """Hosts like Render free put a service to sleep after 15 minutes without inbound requests,
         even mid-job. While jobs are queued or running, request our own public /health so this
         service (and, through its status polls, RAG Core) stays up until the work is done."""
-        url = settings.KEEP_AWAKE_URL.rstrip("/") + "/health"
+        url = (settings.KEEP_AWAKE_URL or "").rstrip("/") + "/health"
         while not self._stopping.is_set():
             await asyncio.sleep(settings.KEEP_AWAKE_INTERVAL_SECONDS)
             try:

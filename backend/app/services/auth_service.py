@@ -13,6 +13,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.context import get_request_id
 from app.core.exceptions import AppError, Conflict, Unauthorized
+from app.db.base import rowcount
 from app.core.time import utcnow
 from app.db.models import AuthToken, User, UserSession
 from app.db.models.auth_token import PASSWORD_RESET
@@ -166,7 +167,7 @@ async def refresh(db: AsyncSession, raw_refresh_token: Optional[str]) -> IssuedS
         .execution_options(synchronize_session=False)
     )
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         logger.info("refresh_grace_used", extra={"session_id": str(session.id), "reason": "concurrent_rotation"})
         return IssuedSession(user, session, security.create_access_token(user.id, session.id), None)
     return IssuedSession(user, session, security.create_access_token(user.id, session.id), new_refresh)

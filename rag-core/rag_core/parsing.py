@@ -14,7 +14,7 @@ import re
 import time
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Union
+from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Union, cast
 
 from advancerag_common.observability import METRICS
 from rag_core import errors, ocr, pdftables, textclean
@@ -438,17 +438,17 @@ def _parse_pdf(source: Source, cfg, report: ExtractionReport) -> List[Page]:
         cleanup = {"hyphen_joins": 0, "margin_lines_removed": 0}
         if cfg.TEXT_CLEANUP:
             idx = [i for i, t in enumerate(texts) if t]
-            cleaned, removed = textclean.remove_repeated_margins([texts[i] for i in idx])
+            cleaned, removed = textclean.remove_repeated_margins([cast(str, texts[i]) for i in idx])
             cleanup["margin_lines_removed"] = removed
             for i, t in zip(idx, cleaned):
                 texts[i] = t
             for i in idx:
-                t, joins = textclean.dehyphenate(texts[i])
+                t, joins = textclean.dehyphenate(cast(str, texts[i]))
                 cleanup["hyphen_joins"] += joins
                 texts[i] = t
             if cfg.UNWRAP_LINES:
                 for i in idx:
-                    texts[i] = textclean.unwrap_lines(texts[i])
+                    texts[i] = textclean.unwrap_lines(cast(str, texts[i]))
         report.cleanup = cleanup
 
         pages: List[Page] = []
@@ -492,7 +492,7 @@ def _structure_tables(source, cfg, report: ExtractionReport, texts: List[Optiona
     per_page: List[List[pdftables.FoundTable]] = []
     layouts: Dict[int, list] = {}
     try:
-        with pdfplumber.open(stream) as pdf:
+        with pdfplumber.open(cast(Any, stream)) as pdf:
             if len(pdf.pages) != len(texts):
                 report.warn(None, "TABLES_FAILED", "Table extraction skipped: the PDF's page count is inconsistent between parsers.")
                 return

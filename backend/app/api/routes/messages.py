@@ -1,11 +1,12 @@
 import uuid
-from typing import Literal
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import DB, CurrentUser
 from app.core.exceptions import AppError
+from app.db.models import Message
 from app.integrations.agent_core import AgentCoreClient, get_agent_client
 from app.middleware.rate_limit import hit_user_limit
 from app.schemas.common import Page, error_responses
@@ -67,7 +68,7 @@ async def send_message(
         raise
     return SendMessageResponse(
         user_message=message_service.to_response(turn.user_message),
-        assistant_message=message_service.to_response(assistant),
+        assistant_message=message_service.to_response(cast(Message, assistant)),
     )
 
 

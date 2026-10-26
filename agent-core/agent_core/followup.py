@@ -254,11 +254,14 @@ def as_sources(priors: List[Prior]) -> Tuple[List[str], List[RetrievedChunk]]:
 
 def table_source(prior: Prior) -> Optional[RetrievedChunk]:
     """The citation of the stored table computation (`<doc>:table`), renumbered as source 1."""
+    structured = prior.structured
+    if structured is None:
+        return None
     for c in prior.citations:
-        if str(c.get("chunk_id", "")).endswith(":table") and str(c.get("document_id")) == prior.structured["document_id"]:
+        if str(c.get("chunk_id", "")).endswith(":table") and str(c.get("document_id")) == structured["document_id"]:
             return RetrievedChunk(source_id=1, chunk_id=str(c["chunk_id"]), document_id=c["document_id"],
-                                  filename=str(c.get("filename") or prior.structured["filename"])[:255], page=None,
-                                  chunk_index=0, text=str(c.get("snippet") or prior.structured["filename"]), score=0.0)
+                                  filename=str(c.get("filename") or structured["filename"])[:255], page=None,
+                                  chunk_index=0, text=str(c.get("snippet") or structured["filename"]), score=0.0)
     return None
 
 

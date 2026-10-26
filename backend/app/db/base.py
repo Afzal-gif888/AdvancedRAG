@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+from typing import Any, Optional, cast
 
 from sqlalchemy import JSON, DateTime, MetaData
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.engine import CursorResult, Result
 from sqlalchemy.types import TypeDecorator
 
 NAMING_CONVENTION = {
@@ -29,7 +31,7 @@ class UTCDateTime(TypeDecorator):
                 value = value.replace(tzinfo=None)
         return value
 
-    def process_result_value(self, value: datetime, dialect):
+    def process_result_value(self, value: Optional[datetime], dialect):
         if value is not None and value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         return value
@@ -41,3 +43,8 @@ JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+def rowcount(result: Result) -> int:
+    """Rows matched by an UPDATE/DELETE. `AsyncSession.execute` is typed as a generic Result, but DML statements return a CursorResult."""
+    return cast("CursorResult[Any]", result).rowcount

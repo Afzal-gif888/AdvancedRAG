@@ -11,7 +11,7 @@ import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union, cast
 
 from advancerag_common.service import ServiceError
 
@@ -90,7 +90,7 @@ def _match(cell: str, f: Filter) -> bool:
     n = to_number(cell)
     if n is None:
         return False
-    target = float(f.value)  # validated numeric
+    target = float(cast(Any, f.value))  # validated numeric
     return {"gt": n > target, "gte": n >= target, "lt": n < target, "lte": n <= target}[f.op]
 
 
@@ -124,10 +124,10 @@ def run(columns: Sequence[str], rows: Sequence[Sequence[str]], *, operation: str
         if f.op == "in" and not isinstance(f.value, list):
             raise invalid("Filter 'in' needs a list.")
         if f.op in ("gt", "gte", "lt", "lte"):
-            f = Filter(f.column, f.op, to_number(str(f.value)))
+            f = Filter(f.column, f.op, cast(Any, to_number(str(f.value))))
         checks.append((col(f.column, "filter column"), f))
     limit = max(1, min(int(limit), MAX_LIMIT))
-    matched = [r for r in rows if all(_match(r[i], f) for i, f in checks)]
+    matched = [r for r in rows if all(_match(cast(str, r[i]), f) for i, f in checks)]
     base = {"operation": operation, "rows_total": len(rows), "rows_matched": len(matched)}
 
     if operation == "count":

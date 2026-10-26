@@ -94,7 +94,7 @@ class LocalEmbeddings(EmbeddingProvider):
                 engine = TextEmbedding(self.model, cache_dir=self._cache_dir, threads=self._threads)
                 tokenizer = getattr(getattr(engine, "model", None), "tokenizer", None)
                 if tokenizer is not None:
-                    self.max_tokens = int((tokenizer.truncation or {}).get("max_length") or self.max_tokens)
+                    self.max_tokens = int((tokenizer.truncation or {}).get("max_length") or self.max_tokens or 0)
                     # Separate, non-truncating copy so counting never affects embedding calls.
                     self._counter = Tokenizer.from_str(tokenizer.to_str())
                     self._counter.no_truncation()

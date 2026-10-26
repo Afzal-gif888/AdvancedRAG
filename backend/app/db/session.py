@@ -1,5 +1,5 @@
 import time
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Dict, Optional, cast
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -9,8 +9,9 @@ from advancerag_common.db import async_engine_args
 from app.core.config import settings
 from app.core.context import db_time_var
 
-engine: Optional[AsyncEngine] = None
-SessionLocal: Optional[async_sessionmaker[AsyncSession]] = None
+# Created by configure_engine() when this module is imported (below); None only for that instant.
+engine: AsyncEngine = cast(Any, None)
+SessionLocal: async_sessionmaker[AsyncSession] = cast(Any, None)
 
 
 def _instrument(sync_engine) -> None:
@@ -33,7 +34,7 @@ def configure_engine(url: Optional[str] = None, **kwargs) -> AsyncEngine:
     global engine, SessionLocal
     # Accepts provider URLs as-is (Neon/Railway: postgresql://…?sslmode=require, pooled endpoints).
     url, connect_args = async_engine_args(url or settings.database_url)
-    options = {"echo": settings.DATABASE_ECHO, "pool_pre_ping": True}
+    options: Dict[str, Any] = {"echo": settings.DATABASE_ECHO, "pool_pre_ping": True}
     if connect_args:
         options["connect_args"] = {**connect_args, **kwargs.pop("connect_args", {})}
     if not url.startswith("sqlite") and "poolclass" not in kwargs:

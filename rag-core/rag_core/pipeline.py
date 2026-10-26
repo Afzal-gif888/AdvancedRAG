@@ -11,7 +11,8 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+import typing
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import anyio
 from sqlalchemy import Text, and_, cast, delete, func, literal, literal_column, select, union_all
@@ -411,9 +412,10 @@ async def _keyword_idf(db: AsyncSession, user_id: uuid.UUID, query: str, documen
 
 async def _keyword(db: AsyncSession, user_id: uuid.UUID, query: str, document_ids: Sequence[uuid.UUID], limit: int,
                    mode: str = "cover_density") -> List[Tuple[str, float]]:
-    if db.bind.dialect.name == "postgresql" and mode == "idf":
+    dialect_name = typing.cast(Any, db.bind).dialect.name
+    if dialect_name == "postgresql" and mode == "idf":
         return await _keyword_idf(db, user_id, query, document_ids, limit)
-    if db.bind.dialect.name == "postgresql":
+    if dialect_name == "postgresql":
         # OR semantics (any query term may match; ts_rank_cd orders by how well), like BM25.
         # plainto_tsquery parses safely and ANDs terms; swapping & for | turns it into an OR query.
         anded = func.plainto_tsquery(literal_column("'english'"), query)

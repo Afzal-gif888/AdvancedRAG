@@ -13,7 +13,8 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+import uuid
+from typing import Optional, cast
 
 from advancerag_common import wake
 from sqlalchemy import delete, select, update
@@ -237,10 +238,10 @@ async def delete_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
         if (await _current_status(db, job.resource_id)) != doc_status.FAILED:
             return
         await _ensure_rag_awake(db, job)
-        await rag.delete_document(document_id=job.resource_id, user_id=job.user_id)
+        await rag.delete_document(document_id=cast(uuid.UUID, job.resource_id), user_id=job.user_id)
         return
     await _ensure_rag_awake(db, job)
-    await rag.delete_document(document_id=job.resource_id, user_id=job.user_id)
+    await rag.delete_document(document_id=cast(uuid.UUID, job.resource_id), user_id=job.user_id)
     key = payload.get("storage_key")
     if key:
         await get_storage_for(payload.get("storage_backend")).delete(key)
@@ -256,7 +257,7 @@ async def delete_document(db: AsyncSession, job: BackgroundJob, rag: RAGCoreClie
 
 async def on_final_failure(db: AsyncSession, job: BackgroundJob, code: str) -> None:
     if job.job_type == job_status.DOCUMENT_INGEST:
-        await document_service.mark_status(db, job.resource_id, doc_status.FAILED, processing_error_message(code))
+        await document_service.mark_status(db, cast(uuid.UUID, job.resource_id), doc_status.FAILED, processing_error_message(code))
         # Guarantee no index data survives a failed document even when RAG Core could not be
         # reached to clean up (bounded retries; skipped if the user reprocesses meanwhile).
         job_service.enqueue(db, job.user_id, job_status.DOCUMENT_DELETE, resource_id=job.resource_id,

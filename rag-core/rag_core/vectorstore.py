@@ -11,7 +11,7 @@ import random
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 from sqlalchemy import select
@@ -258,13 +258,13 @@ class LocalVectorStore(VectorStore):
 
     name = "local"
 
-    async def upsert(self, user_id, records, db=None):
+    async def upsert(self, user_id, records, db: Any = None):
         by_id = {r.id: r.values for r in records}
         rows = (await db.scalars(select(Chunk).where(Chunk.id.in_(list(by_id))))).all()
         for row in rows:
             row.embedding = by_id[row.id]
 
-    async def query(self, user_id, vector, top_k, document_ids, db=None):
+    async def query(self, user_id, vector, top_k, document_ids, db: Any = None):
         rows = (await db.execute(
             select(Chunk.id, Chunk.embedding).where(Chunk.user_id == user_id, Chunk.document_id.in_(list(document_ids)))
         )).all()
@@ -275,14 +275,14 @@ class LocalVectorStore(VectorStore):
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 
-    async def delete(self, user_id, ids, db=None):
+    async def delete(self, user_id, ids, db: Any = None):
         return None  # rows are deleted with the chunks
 
-    async def existing_ids(self, user_id, ids, db=None):
+    async def existing_ids(self, user_id, ids, db: Any = None):
         rows = (await db.execute(select(Chunk.id, Chunk.embedding).where(Chunk.id.in_(list(ids)), Chunk.user_id == user_id))).all()
         return {cid for cid, emb in rows if emb}
 
-    async def count_existing(self, user_id, ids, db=None):
+    async def count_existing(self, user_id, ids, db: Any = None):
         rows = (await db.scalars(select(Chunk.embedding).where(Chunk.id.in_(list(ids)), Chunk.user_id == user_id))).all()
         return sum(1 for e in rows if e)
 

@@ -20,7 +20,9 @@ import logging
 import time
 import uuid
 from collections import defaultdict
-from typing import DefaultDict, List, Union
+from typing import DefaultDict, List, Union, cast
+
+from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.exceptions import RateLimited
@@ -50,7 +52,7 @@ def _client():
     if _redis is None:
         import redis.asyncio as redis
 
-        _redis = redis.from_url(settings.REDIS_URL.get_secret_value(), socket_connect_timeout=2, socket_timeout=2)
+        _redis = redis.from_url(cast(SecretStr, settings.REDIS_URL).get_secret_value(), socket_connect_timeout=2, socket_timeout=2)
     return _redis
 
 

@@ -189,7 +189,7 @@ async def main() -> int:
             if q["answerable"]:
                 top_dense_score["answerable"].append(dense[0][1] if dense else 0.0)
                 for m in methods:
-                    per_q[m].append({"qid": q["id"], "type": q["type"], "split": q["split"], **ev.score_question([info[c] for c in rankings[m]], q["relevant"])})
+                    per_q[m].append({"qid": q["id"], "type": q["type"], "split": q["split"], **ev.score_question([info[c] for c in rankings[m]], q["relevant"], ks=(1, 3, 5, 6, 10, 20))})
                 scored_questions.append(q["id"])
             else:
                 top_dense_score["unanswerable"].append(dense[0][1] if dense else 0.0)
@@ -201,7 +201,7 @@ async def main() -> int:
             n = len(rows)
             lo, hi = ev.wilson(sum(r["hit@6"] for r in rows), n)
             mlo, mhi = ev.bootstrap_ci([r["rr"] for r in rows])
-            return {"n": n, **{k: round(v, 4) for k, v in a.items() if k.split("@")[-1] in ("1", "3", "6", "20") or k == "rr"},
+            return {"n": n, **{k: round(v, 4) for k, v in a.items() if k.split("@")[-1] in ("1", "3", "5", "6", "10", "20") or k == "rr"},
                     "hit@6_ci95": [round(lo, 3), round(hi, 3)], "mrr_ci95": [round(mlo, 3), round(mhi, 3)]}
 
         by_method = {}
@@ -211,7 +211,9 @@ async def main() -> int:
             by_split = {s: summarise([r for r in rows if r["split"] == s]) for s in ("dev", "test")}
             by_method[m] = {"overall": summarise(rows), "by_type": by_type, "by_split": by_split,
                             "per_question": {r["qid"]: [round(r["rr"], 4), r["hit@1"], r["hit@6"], r["recall@20"], r["type"], r["split"]] for r in rows},
-                            "latency_ms": {"p50": round(ev.percentile(lat[m], 50), 1), "p95": round(ev.percentile(lat[m], 95), 1), "n": len(lat[m])}}
+                            "latency_ms": {"mean": round(sum(lat[m]) / len(lat[m]), 1), "min": round(min(lat[m]), 1), "p50": round(ev.percentile(lat[m], 50), 1),
+                                           "p90": round(ev.percentile(lat[m], 90), 1), "p95": round(ev.percentile(lat[m], 95), 1),
+                                           "p99": round(ev.percentile(lat[m], 99), 1), "max": round(max(lat[m]), 1), "n": len(lat[m])}}
         auc = ev.auc(top_dense_score["answerable"], top_dense_score["unanswerable"])
         results["strategies"][strategy] = {
             "ingest": ingest_stats, "questions_scored": len(scored_questions), "by_method": by_method,

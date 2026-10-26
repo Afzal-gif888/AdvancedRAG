@@ -281,12 +281,13 @@ class Orchestrator:
             return None
         if followup.deterministic_table_requested(req.message, target):
             source = followup.table_source(target)
-            if source is not None:
+            table_result = target.structured
+            if source is not None and table_result is not None:
                 meta["followup"] = "deterministic_table"
-                rows = target.structured["results"][0].get("rows_total")
-                text = (followup.render_tables(target.structured)
-                        + f"\n\nExact counts computed earlier over all {rows} rows of {target.structured['filename']} [1].")
-                return text, [source], cit.REFORMATTED, target.structured
+                rows = table_result["results"][0].get("rows_total")
+                text = (followup.render_tables(table_result)
+                        + f"\n\nExact counts computed earlier over all {rows} rows of {table_result['filename']} [1].")
+                return text, [source], cit.REFORMATTED, table_result
 
         # The model rewrites the earlier answer(s); it may use nothing else.
         use = priors[-4:] if target in priors[-4:] else [target, *priors[-3:]]
@@ -345,10 +346,10 @@ class Orchestrator:
             history = normalize_history(req.history, self.cfg)
             if followup.is_followup(req.message):
                 if req.history:
-                    done = await self._followup(req, meta)
+                    reused = await self._followup(req, meta)
                 else:
-                    done, meta["followup"] = None, "no_reusable_answer"
-                if done is None and meta["followup"] == "no_reusable_answer" and followup.wants_transformation(req.message):
+                    reused, meta["followup"] = None, "no_reusable_answer"
+                if reused is None and meta["followup"] == "no_reusable_answer" and followup.wants_transformation(req.message):
                     # "Give the above as a table" with nothing above to reuse: ask, don't search raw data.
                     meta.update({"answer_mode": "followup_clarify", "retrieval_scope": "conversation", "citation_count": 0,
                                  "verification_status": cit.NOT_APPLICABLE, "total_latency_ms": _ms(started)})
@@ -357,8 +358,8 @@ class Orchestrator:
                     outcome = "completed"
                     yield "generation.completed", {"citations": [], "metadata": meta}
                     return
-                if done is not None:
-                    answer, sources, status, kept = done
+                if reused is not None:
+                    answer, sources, status, kept = reused
                     plan = Plan(followup.MODE, sources)
                     citations = cit.extract_citations(answer, sources)
                     meta.update({"answer_mode": followup.MODE, "retrieval_scope": "conversation", "citation_count": len(citations),

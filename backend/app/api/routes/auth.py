@@ -1,3 +1,5 @@
+from typing import cast
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
 from app.api.deps import DB, CurrentAuth, CurrentUser
@@ -59,7 +61,7 @@ def _token_response(issued: auth_service.IssuedSession) -> TokenResponse:
 
 async def _start_session(db, user, request: Request, response: Response) -> TokenResponse:
     issued = await auth_service.issue_session(db, user, request.headers.get("user-agent"), client_ip(request))
-    set_refresh_cookie(response, issued.refresh_token)
+    set_refresh_cookie(response, cast(str, issued.refresh_token))
     return _token_response(issued)
 
 
@@ -108,7 +110,7 @@ async def refresh(request: Request, response: Response, db: DB):
         clear_refresh_cookie(failed)
         return failed
     if issued.refresh_token:
-        set_refresh_cookie(response, issued.refresh_token)
+        set_refresh_cookie(response, cast(str, issued.refresh_token))
     return _token_response(issued)
 
 

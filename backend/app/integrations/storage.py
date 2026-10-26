@@ -8,7 +8,9 @@ import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, BinaryIO, Optional, Protocol
+from typing import AsyncIterator, BinaryIO, Optional, Protocol, cast
+
+from pydantic import SecretStr
 
 import anyio
 
@@ -25,6 +27,7 @@ class Storage(Protocol):
     def stream(self, key: str) -> AsyncIterator[bytes]: ...
     async def delete(self, key: str) -> None: ...
     async def exists(self, key: str) -> bool: ...
+    async def healthy(self) -> bool: ...
 
 
 def make_storage_key(user_id: uuid.UUID, document_id: uuid.UUID) -> str:
@@ -270,9 +273,9 @@ def build_storage(backend: Optional[str] = None) -> Storage:
         return DatabaseStorage()
     if backend == "s3":
         return S3Storage(
-            bucket=settings.STORAGE_BUCKET,
-            access_key=settings.STORAGE_ACCESS_KEY.get_secret_value(),
-            secret_key=settings.STORAGE_SECRET_KEY.get_secret_value(),
+            bucket=cast(str, settings.STORAGE_BUCKET),
+            access_key=cast(SecretStr, settings.STORAGE_ACCESS_KEY).get_secret_value(),
+            secret_key=cast(SecretStr, settings.STORAGE_SECRET_KEY).get_secret_value(),
             endpoint=settings.STORAGE_ENDPOINT,
             region=settings.STORAGE_REGION,
         )

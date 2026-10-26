@@ -1,6 +1,6 @@
 import uuid
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Optional, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import security
 from app.core.config import settings
 from app.core.exceptions import NotFound
+from app.db.base import rowcount
 from app.core.time import utcnow
 from app.db.models import Conversation, Message, Share
 from app.db.models import message as msg_status
@@ -30,7 +31,7 @@ async def _deactivate(db: AsyncSession, conversation_id: uuid.UUID, user_id: uui
         .where(Share.conversation_id == conversation_id, Share.owner_user_id == user_id, Share.is_active.is_(True))
         .values(is_active=False, revoked_at=utcnow())
     )
-    return result.rowcount
+    return rowcount(result)
 
 
 async def create(db: AsyncSession, user_id: uuid.UUID, conversation_id: uuid.UUID, expires_in_days: Optional[int]) -> ShareCreated:
@@ -101,5 +102,5 @@ async def get_public(db: AsyncSession, raw_token: str) -> SharedConversation:
     return SharedConversation(
         title=conv.title,
         shared_at=share.created_at,
-        messages=[SharedMessage(role=m.role, content=m.content, created_at=m.created_at) for m in messages.all()],
+        messages=[SharedMessage(role=cast(Any, m.role), content=m.content, created_at=m.created_at) for m in messages.all()],
     )

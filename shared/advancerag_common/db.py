@@ -18,7 +18,7 @@ statements. `async_engine_args()` turns any such URL into (sqlalchemy_url, conne
 SQLite URLs (tests) pass through untouched. Credentials are never logged by this module.
 """
 import uuid
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Optional
 
 from sqlalchemy.engine import make_url
 
@@ -44,7 +44,8 @@ def async_engine_args(url: str) -> Tuple[str, Dict[str, Any]]:
             raise ValueError("Unsupported sslmode in DATABASE_URL (use require, verify-ca or verify-full)")
         connect_args["ssl"] = sslmode
     if "connect_timeout" in query:
-        connect_args["timeout"] = float(query.pop("connect_timeout"))
+        timeout = query.pop("connect_timeout")
+        connect_args["timeout"] = float(timeout[-1] if isinstance(timeout, tuple) else timeout)  # a repeated parameter arrives as a tuple
     pooled = str(query.pop("pgbouncer", "")).lower() in ("1", "true", "yes") or "-pooler." in (parsed.host or "")
     for key in _LIBPQ_ONLY:
         query.pop(key, None)
@@ -60,7 +61,7 @@ _PRIVATE_SUFFIXES = (".railway.internal", ".internal", ".local", ".svc", ".clust
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres", "db"}
 
 
-def tls_problem(url: str):
+def tls_problem(url: str) -> Optional[str]:
     """Production rule: a database reached over a public network must use TLS. Private networks
     (Railway *.railway.internal, Docker service names, localhost) are exempt."""
     if url.startswith("sqlite"):

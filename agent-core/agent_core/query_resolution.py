@@ -208,7 +208,7 @@ async def resolve_search_query(llm, cfg: Settings, message: str, history: List[D
         return _fallback(message, history, exc.reason)
     rewritten = clean_rewrite(result.content)
     reason = "empty" if rewritten is None else rejection_reason(rewritten, message, history, result.finish_reason)
-    if reason:
+    if reason or rewritten is None:
         log.warning("query_rewrite_rejected_using_fallback", extra={"reason": reason, "model": result.model})
         return _fallback(message, history, reason)
     return ResolvedQuery(rewritten, "rewritten")

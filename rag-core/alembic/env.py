@@ -18,13 +18,13 @@ url = config.attributes.get("database_url")
 if not url:
     from rag_core.config import settings
 
-    url = settings.database_url
+    url = settings.database_url or ""
 
 from advancerag_common.db import async_engine_args  # noqa: E402
 
 # Provider URLs (Neon/Railway: sslmode=require, pooled endpoints) are normalised for asyncpg.
-url, connect_args = async_engine_args(url)
-config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+db_url, connect_args = async_engine_args(url)
+config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 
 def _run(connection):
@@ -34,14 +34,14 @@ def _run(connection):
 
 
 async def _online():
-    engine = create_async_engine(url, poolclass=pool.NullPool, connect_args=connect_args)
+    engine = create_async_engine(db_url, poolclass=pool.NullPool, connect_args=connect_args)
     async with engine.connect() as conn:
         await conn.run_sync(_run)
     await engine.dispose()
 
 
 if context.is_offline_mode():
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    context.configure(url=db_url, target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
 else:

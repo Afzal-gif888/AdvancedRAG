@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.exceptions import AppError, Conflict, NotFound, PayloadTooLarge, UnsupportedMediaType, ValidationFailed
 from app.core.time import utcnow
+from app.db.base import rowcount
 from app.db.models import Document, conversation_documents
 from app.db.models import document as doc_status
 from app.db.models import job as job_types
@@ -449,7 +450,7 @@ async def detach_from_conversation(db: AsyncSession, user_id: uuid.UUID, convers
             conversation_documents.c.document_id == document_id,
         )
     )
-    if result.rowcount == 0:
+    if rowcount(result) == 0:
         raise DocumentNotFound()
     await db.commit()
 

@@ -124,7 +124,7 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
-    return Settings().check_safety()
+    return Settings().check_safety()  # pyright: ignore[reportCallIssue]  (required fields come from the environment)
 
 
 settings = load_settings()

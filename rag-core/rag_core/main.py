@@ -17,7 +17,7 @@ import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 import anyio
 
@@ -265,7 +265,7 @@ async def ready(svc: pipeline.Services = Depends(get_services)):
         checks["database"] = False
     vec_ok, vec_detail = await svc.vectors.health()
     checks["vector_store"] = vec_ok
-    integrity = {"model_mismatch_documents": None}
+    integrity: Dict[str, Optional[int]] = {"model_mismatch_documents": None}
     try:
         async with rag_db.SessionLocal() as s:
             integrity["model_mismatch_documents"] = int(await s.scalar(

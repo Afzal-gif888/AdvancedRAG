@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import List, Optional
+from typing import Any, List, Optional, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,7 @@ def to_response(m: Message) -> MessageResponse:
     return MessageResponse(
         id=m.id,
         conversation_id=m.conversation_id,
-        role=m.role,
+        role=cast(Any, m.role),
         content=m.content,
         status=m.status,
         attachments=meta.get("attachments", []),

@@ -7,7 +7,7 @@ touching callers: they only use enqueue()/notify_worker().
 import asyncio
 import uuid
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.time import utcnow
 from advancerag_common.observability import METRICS
+from app.db.base import rowcount
 from app.db.models import BackgroundJob
 from app.db.models import job as job_status
 
@@ -75,7 +76,7 @@ async def claim_next(db: AsyncSession) -> Optional[BackgroundJob]:
             .values(status=job_status.RUNNING, locked_at=now, attempts=BackgroundJob.attempts + 1)
         )
         await db.commit()
-        if result.rowcount == 1:
+        if rowcount(result) == 1:
             return await db.get(BackgroundJob, job_id, populate_existing=True)
     return None
 
@@ -91,12 +92,12 @@ def _owned(job_id: uuid.UUID, attempt: int):
 
 async def heartbeat(db: AsyncSession, job_id: uuid.UUID, attempt: int, progress: Optional[str] = None) -> None:
     """Refresh the job's lease (locked_at). Raises JobSuperseded if the job was taken away."""
-    values = {"locked_at": utcnow()}
+    values: Dict[str, Any] = {"locked_at": utcnow()}
     if progress is not None:
         values["progress"] = progress[:100]
     result = await db.execute(update(BackgroundJob).where(_owned(job_id, attempt)).values(**values))
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         raise JobSuperseded()
 
 
@@ -104,7 +105,7 @@ async def finish(db: AsyncSession, job_id: uuid.UUID, attempt: int, **values) ->
     """Compare-and-set the job's outcome; only the run that still owns it may record one.
     Returns False (nothing written) when the job was recovered by someone else meanwhile."""
     result = await db.execute(update(BackgroundJob).where(_owned(job_id, attempt)).values(**values))
-    return result.rowcount == 1
+    return rowcount(result) == 1
 
 
 async def queue_stats(db: AsyncSession) -> dict:

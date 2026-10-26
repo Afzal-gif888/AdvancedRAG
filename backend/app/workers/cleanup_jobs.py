@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.time import utcnow
+from app.db.base import rowcount
 from app.db.models import AuthToken, BackgroundJob, Document, UserSession
 from app.db.models import document as doc_status
 from app.db.models import job as job_status
@@ -46,7 +47,7 @@ async def requeue_stale_jobs(db: AsyncSession) -> int:
             .values(locked_at=None, **values)
             .execution_options(synchronize_session=False)
         )
-        if result.rowcount == 1:
+        if rowcount(result) == 1:
             recovered += 1
             if final:
                 await document_jobs.on_final_failure(db, job, "WORKER_CRASHED")
@@ -100,7 +101,7 @@ async def reconcile_documents(db: AsyncSession) -> dict:
         tries = await db.scalar(
             select(func.count()).select_from(BackgroundJob).where(BackgroundJob.resource_id == doc.id, BackgroundJob.job_type == job_status.DOCUMENT_DELETE)
         )
-        if tries >= MAX_DELETE_REDRIVES:
+        if (tries or 0) >= MAX_DELETE_REDRIVES:
             stats["abandoned_delete"] += 1
             logger.error("document_delete_abandoned", extra={"document_id": str(doc.id)})
             continue

@@ -33,7 +33,7 @@ async def list_conversations(
     items, total = await conversation_service.list_for_user(
         db, user.id, limit=limit, offset=offset, q=q, archived=archived, sort=sort, order=order
     )
-    return Page(items=items, total=total, limit=limit, offset=offset)
+    return Page(items=list(items), total=total, limit=limit, offset=offset)
 
 
 @router.get("/{conversation_id}", response_model=ConversationResponse, responses=error_responses(401, 404))

@@ -119,7 +119,7 @@ async def grade(llm, cfg: Settings, question: str, evidence_text: str, source_co
     verdict = data["verdict"]
     if verdict != "insufficient" and not relevant:
         verdict = "insufficient"  # "sufficient" without naming a single relevant passage is not evidence
-    qtype = data.get("question_type") if data.get("question_type") in ("document", "general") else "unknown"
+    qtype = str(data["question_type"]) if data.get("question_type") in ("document", "general") else "unknown"
     return Grade(verdict, sorted(set(relevant)), bool(data.get("conflict") is True), qtype)
 
 
@@ -140,7 +140,8 @@ async def verify(llm, cfg: Settings, question: str, answer: str, evidence_text: 
     if not data or not isinstance(data.get("supported"), bool):
         return Verification("unverified")
     unsupported = [str(c)[:300] for c in data.get("unsupported") or [] if isinstance(c, (str, int, float))][:20]
-    revised = data.get("revised") if isinstance(data.get("revised"), str) else ""
+    raw_revised = data.get("revised")
+    revised = raw_revised if isinstance(raw_revised, str) else ""
     if data["supported"] and not unsupported:
         return Verification("supported")
     if revised.strip():

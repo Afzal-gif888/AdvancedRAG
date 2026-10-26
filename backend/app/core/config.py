@@ -1,6 +1,6 @@
 import os
 from functools import cached_property
-from typing import List, Literal, Optional
+from typing import Any, FrozenSet, List, Literal, Optional
 from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator
@@ -189,7 +189,7 @@ class Settings(BaseSettings):
         "READINESS_REQUIRE_SERVICES", mode="before",
     )
     @classmethod
-    def _blank_to_none(cls, v):
+    def _blank_to_none(cls, v: Any) -> Any:
         return None if isinstance(v, str) and v.strip() == "" else v
 
     def check_safety(self) -> "Settings":
@@ -285,8 +285,9 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT == "production"
 
     @cached_property
-    def allowed_extensions(self) -> frozenset:
+    def allowed_extensions(self) -> FrozenSet[str]:
         return frozenset(e.strip().lower().lstrip(".") for e in self.ALLOWED_UPLOAD_EXTENSIONS.split(",") if e.strip())
 
 
-settings = Settings().check_safety()
+# Required fields (ENVIRONMENT, JWT_*, DATABASE_URL) are read from the environment by pydantic-settings, not passed here.
+settings = Settings().check_safety()  # pyright: ignore[reportCallIssue]

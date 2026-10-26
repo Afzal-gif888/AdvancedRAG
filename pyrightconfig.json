@@ -1,0 +1,8 @@
+{
+  "pythonVersion": "3.13",
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": ["shared", "backend", "rag-core", "agent-core", "llm"],
+  "include": ["backend/app", "backend/alembic", "rag-core/rag_core", "rag-core/alembic", "agent-core/agent_core", "llm/llm_service", "shared"],
+  "exclude": ["**/node_modules", "**/__pycache__", ".venv", "frontend", "**/tests"]
+}
